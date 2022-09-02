@@ -1,0 +1,517 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/access/transam/transam.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/access/transam</a> - transam.c<span style="font-size: 80%;"> (source / <a href="transam.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">58</td>
+            <td class="headerCovTableEntry">87</td>
+            <td class="headerCovTableEntryLo">66.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:33:24</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">12</td>
+            <td class="headerCovTableEntry">13</td>
+            <td class="headerCovTableEntryHi">92.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">26</td>
+            <td class="headerCovTableEntry">54</td>
+            <td class="headerCovTableEntryLo">48.1 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">           Branch data     Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>                :            : /*-------------------------------------------------------------------------</a>
+<span class="lineNum">       2 </span>                :            :  *
+<span class="lineNum">       3 </span>                :            :  * transam.c
+<span class="lineNum">       4 </span>                :            :  *    postgres transaction (commit) log interface routines
+<span class="lineNum">       5 </span>                :            :  *
+<span class="lineNum">       6 </span>                :            :  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+<span class="lineNum">       7 </span>                :            :  * Portions Copyright (c) 1994, Regents of the University of California
+<span class="lineNum">       8 </span>                :            :  *
+<span class="lineNum">       9 </span>                :            :  *
+<span class="lineNum">      10 </span>                :            :  * IDENTIFICATION
+<span class="lineNum">      11 </span>                :            :  *    src/backend/access/transam/transam.c
+<span class="lineNum">      12 </span>                :            :  *
+<span class="lineNum">      13 </span>                :            :  * NOTES
+<span class="lineNum">      14 </span>                :            :  *    This file contains the high level access-method interface to the
+<span class="lineNum">      15 </span>                :            :  *    transaction system.
+<span class="lineNum">      16 </span>                :            :  *
+<span class="lineNum">      17 </span>                :            :  *-------------------------------------------------------------------------
+<span class="lineNum">      18 </span>                :            :  */
+<span class="lineNum">      19 </span>                :            : 
+<span class="lineNum">      20 </span>                :            : #include &quot;postgres.h&quot;
+<span class="lineNum">      21 </span>                :            : 
+<span class="lineNum">      22 </span>                :            : #include &quot;access/clog.h&quot;
+<span class="lineNum">      23 </span>                :            : #include &quot;access/subtrans.h&quot;
+<span class="lineNum">      24 </span>                :            : #include &quot;access/transam.h&quot;
+<span class="lineNum">      25 </span>                :            : #include &quot;utils/snapmgr.h&quot;
+<span class="lineNum">      26 </span>                :            : 
+<span class="lineNum">      27 </span>                :            : /*
+<span class="lineNum">      28 </span>                :            :  * Single-item cache for results of TransactionLogFetch.  It's worth having
+<span class="lineNum">      29 </span>                :            :  * such a cache because we frequently find ourselves repeatedly checking the
+<span class="lineNum">      30 </span>                :            :  * same XID, for example when scanning a table just after a bulk insert,
+<span class="lineNum">      31 </span>                :            :  * update, or delete.
+<span class="lineNum">      32 </span>                :            :  */
+<span class="lineNum">      33 </span>                :            : static TransactionId cachedFetchXid = InvalidTransactionId;
+<span class="lineNum">      34 </span>                :            : static XidStatus cachedFetchXidStatus;
+<span class="lineNum">      35 </span>                :            : static XLogRecPtr cachedCommitLSN;
+<span class="lineNum">      36 </span>                :            : 
+<span class="lineNum">      37 </span>                :            : /* Local functions */
+<span class="lineNum">      38 </span>                :            : static XidStatus TransactionLogFetch(TransactionId transactionId);
+<span class="lineNum">      39 </span>                :            : 
+<span class="lineNum">      40 </span>                :            : 
+<span class="lineNum">      41 </span>                :            : /* ----------------------------------------------------------------
+<span class="lineNum">      42 </span>                :            :  *      Postgres log access method interface
+<span class="lineNum">      43 </span>                :            :  *
+<span class="lineNum">      44 </span>                :            :  *      TransactionLogFetch
+<span class="lineNum">      45 </span>                :            :  * ----------------------------------------------------------------
+<span class="lineNum">      46 </span>                :            :  */
+<span class="lineNum">      47 </span>                :            : 
+<span class="lineNum">      48 </span>                :            : /*
+<span class="lineNum">      49 </span>                :            :  * TransactionLogFetch --- fetch commit status of specified transaction id
+<a name="50"><span class="lineNum">      50 </span>                :            :  */</a>
+<span class="lineNum">      51 </span>                :            : static XidStatus
+<span class="lineNum">      52 </span>                :<span class="lineCov">     920617 : TransactionLogFetch(TransactionId transactionId)</span>
+<span class="lineNum">      53 </span>                :            : {
+<span class="lineNum">      54 </span>                :            :     XidStatus   xidstatus;
+<span class="lineNum">      55 </span>                :            :     XLogRecPtr  xidlsn;
+<span class="lineNum">      56 </span>                :            : 
+<span class="lineNum">      57 </span>                :            :     /*
+<span class="lineNum">      58 </span>                :            :      * Before going to the commit log manager, check our single item cache to
+<span class="lineNum">      59 </span>                :            :      * see if we didn't just check the transaction status a moment ago.
+<span class="lineNum">      60 </span>                :            :      */
+<span class="lineNum">      61 </span>        [<span class="branchCov" title="Branch 0 was taken 309567 times"> + </span><span class="branchCov" title="Branch 1 was taken 611050 times"> + </span>]:<span class="lineCov">     920617 :     if (TransactionIdEquals(transactionId, cachedFetchXid))</span>
+<span class="lineNum">      62 </span>                :<span class="lineCov">     309567 :         return cachedFetchXidStatus;</span>
+<span class="lineNum">      63 </span>                :            : 
+<span class="lineNum">      64 </span>                :            :     /*
+<span class="lineNum">      65 </span>                :            :      * Also, check to see if the transaction ID is a permanent one.
+<span class="lineNum">      66 </span>                :            :      */
+<span class="lineNum">      67 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 611050 times"> + </span>]:<span class="lineCov">     611050 :     if (!TransactionIdIsNormal(transactionId))</span>
+<span class="lineNum">      68 </span>                :            :     {
+<span class="lineNum">      69 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (TransactionIdEquals(transactionId, BootstrapTransactionId))</span>
+<span class="lineNum">      70 </span>                :<span class="lineNoCov">          0 :             return TRANSACTION_STATUS_COMMITTED;</span>
+<span class="lineNum">      71 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (TransactionIdEquals(transactionId, FrozenTransactionId))</span>
+<span class="lineNum">      72 </span>                :<span class="lineNoCov">          0 :             return TRANSACTION_STATUS_COMMITTED;</span>
+<span class="lineNum">      73 </span>                :<span class="lineNoCov">          0 :         return TRANSACTION_STATUS_ABORTED;</span>
+<span class="lineNum">      74 </span>                :            :     }
+<span class="lineNum">      75 </span>                :            : 
+<span class="lineNum">      76 </span>                :            :     /*
+<span class="lineNum">      77 </span>                :            :      * Get the transaction status.
+<span class="lineNum">      78 </span>                :            :      */
+<span class="lineNum">      79 </span>                :<span class="lineCov">     611050 :     xidstatus = TransactionIdGetStatus(transactionId, &amp;xidlsn);</span>
+<span class="lineNum">      80 </span>                :            : 
+<span class="lineNum">      81 </span>                :            :     /*
+<span class="lineNum">      82 </span>                :            :      * Cache it, but DO NOT cache status for unfinished or sub-committed
+<span class="lineNum">      83 </span>                :            :      * transactions!  We only cache status that is guaranteed not to change.
+<span class="lineNum">      84 </span>                :            :      */
+<span class="lineNum">      85 </span>[<span class="branchCov" title="Branch 0 was taken 594852 times"> + </span><span class="branchCov" title="Branch 1 was taken 16198 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 594852 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">     611050 :     if (xidstatus != TRANSACTION_STATUS_IN_PROGRESS &amp;&amp;</span>
+<span class="lineNum">      86 </span>                :            :         xidstatus != TRANSACTION_STATUS_SUB_COMMITTED)
+<span class="lineNum">      87 </span>                :            :     {
+<span class="lineNum">      88 </span>                :<span class="lineCov">     594852 :         cachedFetchXid = transactionId;</span>
+<span class="lineNum">      89 </span>                :<span class="lineCov">     594852 :         cachedFetchXidStatus = xidstatus;</span>
+<span class="lineNum">      90 </span>                :<span class="lineCov">     594852 :         cachedCommitLSN = xidlsn;</span>
+<span class="lineNum">      91 </span>                :            :     }
+<span class="lineNum">      92 </span>                :            : 
+<span class="lineNum">      93 </span>                :<span class="lineCov">     920617 :     return xidstatus;</span>
+<span class="lineNum">      94 </span>                :            : }
+<span class="lineNum">      95 </span>                :            : 
+<span class="lineNum">      96 </span>                :            : /* ----------------------------------------------------------------
+<span class="lineNum">      97 </span>                :            :  *                      Interface functions
+<span class="lineNum">      98 </span>                :            :  *
+<span class="lineNum">      99 </span>                :            :  *      TransactionIdDidCommit
+<span class="lineNum">     100 </span>                :            :  *      TransactionIdDidAbort
+<span class="lineNum">     101 </span>                :            :  *      ========
+<span class="lineNum">     102 </span>                :            :  *         these functions test the transaction status of
+<span class="lineNum">     103 </span>                :            :  *         a specified transaction id.
+<span class="lineNum">     104 </span>                :            :  *
+<span class="lineNum">     105 </span>                :            :  *      TransactionIdCommitTree
+<span class="lineNum">     106 </span>                :            :  *      TransactionIdAsyncCommitTree
+<span class="lineNum">     107 </span>                :            :  *      TransactionIdAbortTree
+<span class="lineNum">     108 </span>                :            :  *      ========
+<span class="lineNum">     109 </span>                :            :  *         these functions set the transaction status of the specified
+<span class="lineNum">     110 </span>                :            :  *         transaction tree.
+<span class="lineNum">     111 </span>                :            :  *
+<span class="lineNum">     112 </span>                :            :  * See also TransactionIdIsInProgress, which once was in this module
+<span class="lineNum">     113 </span>                :            :  * but now lives in procarray.c.
+<span class="lineNum">     114 </span>                :            :  * ----------------------------------------------------------------
+<span class="lineNum">     115 </span>                :            :  */
+<span class="lineNum">     116 </span>                :            : 
+<span class="lineNum">     117 </span>                :            : /*
+<span class="lineNum">     118 </span>                :            :  * TransactionIdDidCommit
+<span class="lineNum">     119 </span>                :            :  *      True iff transaction associated with the identifier did commit.
+<span class="lineNum">     120 </span>                :            :  *
+<span class="lineNum">     121 </span>                :            :  * Note:
+<span class="lineNum">     122 </span>                :            :  *      Assumes transaction identifier is valid and exists in clog.
+<a name="123"><span class="lineNum">     123 </span>                :            :  */</a>
+<span class="lineNum">     124 </span>                :            : bool                            /* true if given transaction committed */
+<span class="lineNum">     125 </span>                :<span class="lineCov">     914013 : TransactionIdDidCommit(TransactionId transactionId)</span>
+<span class="lineNum">     126 </span>                :            : {
+<span class="lineNum">     127 </span>                :            :     XidStatus   xidstatus;
+<span class="lineNum">     128 </span>                :            : 
+<span class="lineNum">     129 </span>                :<span class="lineCov">     914013 :     xidstatus = TransactionLogFetch(transactionId);</span>
+<span class="lineNum">     130 </span>                :            : 
+<span class="lineNum">     131 </span>                :            :     /*
+<span class="lineNum">     132 </span>                :            :      * If it's marked committed, it's committed.
+<span class="lineNum">     133 </span>                :            :      */
+<span class="lineNum">     134 </span>        [<span class="branchCov" title="Branch 0 was taken 844080 times"> + </span><span class="branchCov" title="Branch 1 was taken 69933 times"> + </span>]:<span class="lineCov">     914013 :     if (xidstatus == TRANSACTION_STATUS_COMMITTED)</span>
+<span class="lineNum">     135 </span>                :<span class="lineCov">     844080 :         return true;</span>
+<span class="lineNum">     136 </span>                :            : 
+<span class="lineNum">     137 </span>                :            :     /*
+<span class="lineNum">     138 </span>                :            :      * If it's marked subcommitted, we have to check the parent recursively.
+<span class="lineNum">     139 </span>                :            :      * However, if it's older than TransactionXmin, we can't look at
+<span class="lineNum">     140 </span>                :            :      * pg_subtrans; instead assume that the parent crashed without cleaning up
+<span class="lineNum">     141 </span>                :            :      * its children.
+<span class="lineNum">     142 </span>                :            :      *
+<span class="lineNum">     143 </span>                :            :      * Originally we Assert'ed that the result of SubTransGetParent was not
+<span class="lineNum">     144 </span>                :            :      * zero. However with the introduction of prepared transactions, there can
+<span class="lineNum">     145 </span>                :            :      * be a window just after database startup where we do not have complete
+<span class="lineNum">     146 </span>                :            :      * knowledge in pg_subtrans of the transactions after TransactionXmin.
+<span class="lineNum">     147 </span>                :            :      * StartupSUBTRANS() has ensured that any missing information will be
+<span class="lineNum">     148 </span>                :            :      * zeroed.  Since this case should not happen under normal conditions, it
+<span class="lineNum">     149 </span>                :            :      * seems reasonable to emit a WARNING for it.
+<span class="lineNum">     150 </span>                :            :      */
+<span class="lineNum">     151 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 69933 times"> + </span>]:<span class="lineCov">      69933 :     if (xidstatus == TRANSACTION_STATUS_SUB_COMMITTED)</span>
+<span class="lineNum">     152 </span>                :            :     {
+<span class="lineNum">     153 </span>                :            :         TransactionId parentXid;
+<span class="lineNum">     154 </span>                :            : 
+<span class="lineNum">     155 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (TransactionIdPrecedes(transactionId, TransactionXmin))</span>
+<span class="lineNum">     156 </span>                :<span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     157 </span>                :<span class="lineNoCov">          0 :         parentXid = SubTransGetParent(transactionId);</span>
+<span class="lineNum">     158 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (!TransactionIdIsValid(parentXid))</span>
+<span class="lineNum">     159 </span>                :            :         {
+<span class="lineNum">     160 </span>                :<span class="lineNoCov">          0 :             elog(WARNING, &quot;no pg_subtrans entry for subcommitted XID %u&quot;,</span>
+<span class="lineNum">     161 </span>                :            :                  transactionId);
+<span class="lineNum">     162 </span>                :<span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     163 </span>                :            :         }
+<span class="lineNum">     164 </span>                :<span class="lineNoCov">          0 :         return TransactionIdDidCommit(parentXid);</span>
+<span class="lineNum">     165 </span>                :            :     }
+<span class="lineNum">     166 </span>                :            : 
+<span class="lineNum">     167 </span>                :            :     /*
+<span class="lineNum">     168 </span>                :            :      * It's not committed.
+<span class="lineNum">     169 </span>                :            :      */
+<span class="lineNum">     170 </span>                :<span class="lineCov">      69933 :     return false;</span>
+<span class="lineNum">     171 </span>                :            : }
+<span class="lineNum">     172 </span>                :            : 
+<span class="lineNum">     173 </span>                :            : /*
+<span class="lineNum">     174 </span>                :            :  * TransactionIdDidAbort
+<span class="lineNum">     175 </span>                :            :  *      True iff transaction associated with the identifier did abort.
+<span class="lineNum">     176 </span>                :            :  *
+<span class="lineNum">     177 </span>                :            :  * Note:
+<span class="lineNum">     178 </span>                :            :  *      Assumes transaction identifier is valid and exists in clog.
+<a name="179"><span class="lineNum">     179 </span>                :            :  */</a>
+<span class="lineNum">     180 </span>                :            : bool                            /* true if given transaction aborted */
+<span class="lineNum">     181 </span>                :<span class="lineCov">       6604 : TransactionIdDidAbort(TransactionId transactionId)</span>
+<span class="lineNum">     182 </span>                :            : {
+<span class="lineNum">     183 </span>                :            :     XidStatus   xidstatus;
+<span class="lineNum">     184 </span>                :            : 
+<span class="lineNum">     185 </span>                :<span class="lineCov">       6604 :     xidstatus = TransactionLogFetch(transactionId);</span>
+<span class="lineNum">     186 </span>                :            : 
+<span class="lineNum">     187 </span>                :            :     /*
+<span class="lineNum">     188 </span>                :            :      * If it's marked aborted, it's aborted.
+<span class="lineNum">     189 </span>                :            :      */
+<span class="lineNum">     190 </span>        [<span class="branchCov" title="Branch 0 was taken 1345 times"> + </span><span class="branchCov" title="Branch 1 was taken 5259 times"> + </span>]:<span class="lineCov">       6604 :     if (xidstatus == TRANSACTION_STATUS_ABORTED)</span>
+<span class="lineNum">     191 </span>                :<span class="lineCov">       1345 :         return true;</span>
+<span class="lineNum">     192 </span>                :            : 
+<span class="lineNum">     193 </span>                :            :     /*
+<span class="lineNum">     194 </span>                :            :      * If it's marked subcommitted, we have to check the parent recursively.
+<span class="lineNum">     195 </span>                :            :      * However, if it's older than TransactionXmin, we can't look at
+<span class="lineNum">     196 </span>                :            :      * pg_subtrans; instead assume that the parent crashed without cleaning up
+<span class="lineNum">     197 </span>                :            :      * its children.
+<span class="lineNum">     198 </span>                :            :      */
+<span class="lineNum">     199 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 5259 times"> + </span>]:<span class="lineCov">       5259 :     if (xidstatus == TRANSACTION_STATUS_SUB_COMMITTED)</span>
+<span class="lineNum">     200 </span>                :            :     {
+<span class="lineNum">     201 </span>                :            :         TransactionId parentXid;
+<span class="lineNum">     202 </span>                :            : 
+<span class="lineNum">     203 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (TransactionIdPrecedes(transactionId, TransactionXmin))</span>
+<span class="lineNum">     204 </span>                :<span class="lineNoCov">          0 :             return true;</span>
+<span class="lineNum">     205 </span>                :<span class="lineNoCov">          0 :         parentXid = SubTransGetParent(transactionId);</span>
+<span class="lineNum">     206 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (!TransactionIdIsValid(parentXid))</span>
+<span class="lineNum">     207 </span>                :            :         {
+<span class="lineNum">     208 </span>                :            :             /* see notes in TransactionIdDidCommit */
+<span class="lineNum">     209 </span>                :<span class="lineNoCov">          0 :             elog(WARNING, &quot;no pg_subtrans entry for subcommitted XID %u&quot;,</span>
+<span class="lineNum">     210 </span>                :            :                  transactionId);
+<span class="lineNum">     211 </span>                :<span class="lineNoCov">          0 :             return true;</span>
+<span class="lineNum">     212 </span>                :            :         }
+<span class="lineNum">     213 </span>                :<span class="lineNoCov">          0 :         return TransactionIdDidAbort(parentXid);</span>
+<span class="lineNum">     214 </span>                :            :     }
+<span class="lineNum">     215 </span>                :            : 
+<span class="lineNum">     216 </span>                :            :     /*
+<span class="lineNum">     217 </span>                :            :      * It's not aborted.
+<span class="lineNum">     218 </span>                :            :      */
+<span class="lineNum">     219 </span>                :<span class="lineCov">       5259 :     return false;</span>
+<span class="lineNum">     220 </span>                :            : }
+<span class="lineNum">     221 </span>                :            : 
+<span class="lineNum">     222 </span>                :            : /*
+<span class="lineNum">     223 </span>                :            :  * TransactionIdIsKnownCompleted
+<span class="lineNum">     224 </span>                :            :  *      True iff transaction associated with the identifier is currently
+<span class="lineNum">     225 </span>                :            :  *      known to have either committed or aborted.
+<span class="lineNum">     226 </span>                :            :  *
+<span class="lineNum">     227 </span>                :            :  * This does NOT look into pg_xact but merely probes our local cache
+<span class="lineNum">     228 </span>                :            :  * (and so it's not named TransactionIdDidComplete, which would be the
+<span class="lineNum">     229 </span>                :            :  * appropriate name for a function that worked that way).  The intended
+<span class="lineNum">     230 </span>                :            :  * use is just to short-circuit TransactionIdIsInProgress calls when doing
+<span class="lineNum">     231 </span>                :            :  * repeated heapam_visibility.c checks for the same XID.  If this isn't
+<span class="lineNum">     232 </span>                :            :  * extremely fast then it will be counterproductive.
+<span class="lineNum">     233 </span>                :            :  *
+<span class="lineNum">     234 </span>                :            :  * Note:
+<span class="lineNum">     235 </span>                :            :  *      Assumes transaction identifier is valid.
+<a name="236"><span class="lineNum">     236 </span>                :            :  */</a>
+<span class="lineNum">     237 </span>                :            : bool
+<span class="lineNum">     238 </span>                :<span class="lineCov">     779793 : TransactionIdIsKnownCompleted(TransactionId transactionId)</span>
+<span class="lineNum">     239 </span>                :            : {
+<span class="lineNum">     240 </span>        [<span class="branchCov" title="Branch 0 was taken 53236 times"> + </span><span class="branchCov" title="Branch 1 was taken 726557 times"> + </span>]:<span class="lineCov">     779793 :     if (TransactionIdEquals(transactionId, cachedFetchXid))</span>
+<span class="lineNum">     241 </span>                :            :     {
+<span class="lineNum">     242 </span>                :            :         /* If it's in the cache at all, it must be completed. */
+<span class="lineNum">     243 </span>                :<span class="lineCov">      53236 :         return true;</span>
+<span class="lineNum">     244 </span>                :            :     }
+<span class="lineNum">     245 </span>                :            : 
+<span class="lineNum">     246 </span>                :<span class="lineCov">     726557 :     return false;</span>
+<span class="lineNum">     247 </span>                :            : }
+<span class="lineNum">     248 </span>                :            : 
+<span class="lineNum">     249 </span>                :            : /*
+<span class="lineNum">     250 </span>                :            :  * TransactionIdCommitTree
+<span class="lineNum">     251 </span>                :            :  *      Marks the given transaction and children as committed
+<span class="lineNum">     252 </span>                :            :  *
+<span class="lineNum">     253 </span>                :            :  * &quot;xid&quot; is a toplevel transaction commit, and the xids array contains its
+<span class="lineNum">     254 </span>                :            :  * committed subtransactions.
+<span class="lineNum">     255 </span>                :            :  *
+<span class="lineNum">     256 </span>                :            :  * This commit operation is not guaranteed to be atomic, but if not, subxids
+<span class="lineNum">     257 </span>                :            :  * are correctly marked subcommit first.
+<a name="258"><span class="lineNum">     258 </span>                :            :  */</a>
+<span class="lineNum">     259 </span>                :            : void
+<span class="lineNum">     260 </span>                :<span class="lineCov">      19103 : TransactionIdCommitTree(TransactionId xid, int nxids, TransactionId *xids)</span>
+<span class="lineNum">     261 </span>                :            : {
+<span class="lineNum">     262 </span>                :<span class="lineCov">      19103 :     TransactionIdSetTreeStatus(xid, nxids, xids,</span>
+<span class="lineNum">     263 </span>                :            :                                TRANSACTION_STATUS_COMMITTED,
+<span class="lineNum">     264 </span>                :            :                                InvalidXLogRecPtr);
+<span class="lineNum">     265 </span>                :<span class="lineCov">      19103 : }</span>
+<span class="lineNum">     266 </span>                :            : 
+<span class="lineNum">     267 </span>                :            : /*
+<span class="lineNum">     268 </span>                :            :  * TransactionIdAsyncCommitTree
+<span class="lineNum">     269 </span>                :            :  *      Same as above, but for async commits.  The commit record LSN is needed.
+<a name="270"><span class="lineNum">     270 </span>                :            :  */</a>
+<span class="lineNum">     271 </span>                :            : void
+<span class="lineNum">     272 </span>                :<span class="lineNoCov">          0 : TransactionIdAsyncCommitTree(TransactionId xid, int nxids, TransactionId *xids,</span>
+<span class="lineNum">     273 </span>                :            :                              XLogRecPtr lsn)
+<span class="lineNum">     274 </span>                :            : {
+<span class="lineNum">     275 </span>                :<span class="lineNoCov">          0 :     TransactionIdSetTreeStatus(xid, nxids, xids,</span>
+<span class="lineNum">     276 </span>                :            :                                TRANSACTION_STATUS_COMMITTED, lsn);
+<span class="lineNum">     277 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     278 </span>                :            : 
+<span class="lineNum">     279 </span>                :            : /*
+<span class="lineNum">     280 </span>                :            :  * TransactionIdAbortTree
+<span class="lineNum">     281 </span>                :            :  *      Marks the given transaction and children as aborted.
+<span class="lineNum">     282 </span>                :            :  *
+<span class="lineNum">     283 </span>                :            :  * &quot;xid&quot; is a toplevel transaction commit, and the xids array contains its
+<span class="lineNum">     284 </span>                :            :  * committed subtransactions.
+<span class="lineNum">     285 </span>                :            :  *
+<span class="lineNum">     286 </span>                :            :  * We don't need to worry about the non-atomic behavior, since any onlookers
+<span class="lineNum">     287 </span>                :            :  * will consider all the xacts as not-yet-committed anyway.
+<a name="288"><span class="lineNum">     288 </span>                :            :  */</a>
+<span class="lineNum">     289 </span>                :            : void
+<span class="lineNum">     290 </span>                :<span class="lineCov">      12534 : TransactionIdAbortTree(TransactionId xid, int nxids, TransactionId *xids)</span>
+<span class="lineNum">     291 </span>                :            : {
+<span class="lineNum">     292 </span>                :<span class="lineCov">      12534 :     TransactionIdSetTreeStatus(xid, nxids, xids,</span>
+<span class="lineNum">     293 </span>                :            :                                TRANSACTION_STATUS_ABORTED, InvalidXLogRecPtr);
+<span class="lineNum">     294 </span>                :<span class="lineCov">      12534 : }</span>
+<span class="lineNum">     295 </span>                :            : 
+<span class="lineNum">     296 </span>                :            : /*
+<span class="lineNum">     297 </span>                :            :  * TransactionIdPrecedes --- is id1 logically &lt; id2?
+<a name="298"><span class="lineNum">     298 </span>                :            :  */</a>
+<span class="lineNum">     299 </span>                :            : bool
+<span class="lineNum">     300 </span>                :<span class="lineCov">   35039147 : TransactionIdPrecedes(TransactionId id1, TransactionId id2)</span>
+<span class="lineNum">     301 </span>                :            : {
+<span class="lineNum">     302 </span>                :            :     /*
+<span class="lineNum">     303 </span>                :            :      * If either ID is a permanent XID then we can just do unsigned
+<span class="lineNum">     304 </span>                :            :      * comparison.  If both are normal, do a modulo-2^32 comparison.
+<span class="lineNum">     305 </span>                :            :      */
+<span class="lineNum">     306 </span>                :            :     int32       diff;
+<span class="lineNum">     307 </span>                :            : 
+<span class="lineNum">     308 </span>[<span class="branchCov" title="Branch 0 was taken 33821410 times"> + </span><span class="branchCov" title="Branch 1 was taken 1217737 times"> + </span>][<span class="branchNoCov" title="Branch 2 was not taken"> - </span><span class="branchCov" title="Branch 3 was taken 33821410 times"> + </span>]:<span class="lineCov">   35039147 :     if (!TransactionIdIsNormal(id1) || !TransactionIdIsNormal(id2))</span>
+<span class="lineNum">     309 </span>                :<span class="lineCov">    1217737 :         return (id1 &lt; id2);</span>
+<span class="lineNum">     310 </span>                :            : 
+<span class="lineNum">     311 </span>                :<span class="lineCov">   33821410 :     diff = (int32) (id1 - id2);</span>
+<span class="lineNum">     312 </span>                :<span class="lineCov">   33821410 :     return (diff &lt; 0);</span>
+<span class="lineNum">     313 </span>                :            : }
+<span class="lineNum">     314 </span>                :            : 
+<span class="lineNum">     315 </span>                :            : /*
+<span class="lineNum">     316 </span>                :            :  * TransactionIdPrecedesOrEquals --- is id1 logically &lt;= id2?
+<a name="317"><span class="lineNum">     317 </span>                :            :  */</a>
+<span class="lineNum">     318 </span>                :            : bool
+<span class="lineNum">     319 </span>                :<span class="lineCov">       5627 : TransactionIdPrecedesOrEquals(TransactionId id1, TransactionId id2)</span>
+<span class="lineNum">     320 </span>                :            : {
+<span class="lineNum">     321 </span>                :            :     int32       diff;
+<span class="lineNum">     322 </span>                :            : 
+<span class="lineNum">     323 </span>[<span class="branchCov" title="Branch 0 was taken 5627 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchNoCov" title="Branch 2 was not taken"> - </span><span class="branchCov" title="Branch 3 was taken 5627 times"> + </span>]:<span class="lineCov">       5627 :     if (!TransactionIdIsNormal(id1) || !TransactionIdIsNormal(id2))</span>
+<span class="lineNum">     324 </span>                :<span class="lineNoCov">          0 :         return (id1 &lt;= id2);</span>
+<span class="lineNum">     325 </span>                :            : 
+<span class="lineNum">     326 </span>                :<span class="lineCov">       5627 :     diff = (int32) (id1 - id2);</span>
+<span class="lineNum">     327 </span>                :<span class="lineCov">       5627 :     return (diff &lt;= 0);</span>
+<span class="lineNum">     328 </span>                :            : }
+<span class="lineNum">     329 </span>                :            : 
+<span class="lineNum">     330 </span>                :            : /*
+<span class="lineNum">     331 </span>                :            :  * TransactionIdFollows --- is id1 logically &gt; id2?
+<a name="332"><span class="lineNum">     332 </span>                :            :  */</a>
+<span class="lineNum">     333 </span>                :            : bool
+<span class="lineNum">     334 </span>                :<span class="lineCov">     823753 : TransactionIdFollows(TransactionId id1, TransactionId id2)</span>
+<span class="lineNum">     335 </span>                :            : {
+<span class="lineNum">     336 </span>                :            :     int32       diff;
+<span class="lineNum">     337 </span>                :            : 
+<span class="lineNum">     338 </span>[<span class="branchCov" title="Branch 0 was taken 823753 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchCov" title="Branch 2 was taken 5415 times"> + </span><span class="branchCov" title="Branch 3 was taken 818338 times"> + </span>]:<span class="lineCov">     823753 :     if (!TransactionIdIsNormal(id1) || !TransactionIdIsNormal(id2))</span>
+<span class="lineNum">     339 </span>                :<span class="lineCov">       5415 :         return (id1 &gt; id2);</span>
+<span class="lineNum">     340 </span>                :            : 
+<span class="lineNum">     341 </span>                :<span class="lineCov">     818338 :     diff = (int32) (id1 - id2);</span>
+<span class="lineNum">     342 </span>                :<span class="lineCov">     818338 :     return (diff &gt; 0);</span>
+<span class="lineNum">     343 </span>                :            : }
+<span class="lineNum">     344 </span>                :            : 
+<span class="lineNum">     345 </span>                :            : /*
+<span class="lineNum">     346 </span>                :            :  * TransactionIdFollowsOrEquals --- is id1 logically &gt;= id2?
+<a name="347"><span class="lineNum">     347 </span>                :            :  */</a>
+<span class="lineNum">     348 </span>                :            : bool
+<span class="lineNum">     349 </span>                :<span class="lineCov">    2217752 : TransactionIdFollowsOrEquals(TransactionId id1, TransactionId id2)</span>
+<span class="lineNum">     350 </span>                :            : {
+<span class="lineNum">     351 </span>                :            :     int32       diff;
+<span class="lineNum">     352 </span>                :            : 
+<span class="lineNum">     353 </span>[<span class="branchCov" title="Branch 0 was taken 2217752 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchNoCov" title="Branch 2 was not taken"> - </span><span class="branchCov" title="Branch 3 was taken 2217752 times"> + </span>]:<span class="lineCov">    2217752 :     if (!TransactionIdIsNormal(id1) || !TransactionIdIsNormal(id2))</span>
+<span class="lineNum">     354 </span>                :<span class="lineNoCov">          0 :         return (id1 &gt;= id2);</span>
+<span class="lineNum">     355 </span>                :            : 
+<span class="lineNum">     356 </span>                :<span class="lineCov">    2217752 :     diff = (int32) (id1 - id2);</span>
+<span class="lineNum">     357 </span>                :<span class="lineCov">    2217752 :     return (diff &gt;= 0);</span>
+<span class="lineNum">     358 </span>                :            : }
+<span class="lineNum">     359 </span>                :            : 
+<span class="lineNum">     360 </span>                :            : 
+<span class="lineNum">     361 </span>                :            : /*
+<span class="lineNum">     362 </span>                :            :  * TransactionIdLatest --- get latest XID among a main xact and its children
+<a name="363"><span class="lineNum">     363 </span>                :            :  */</a>
+<span class="lineNum">     364 </span>                :            : TransactionId
+<span class="lineNum">     365 </span>                :<span class="lineCov">      33302 : TransactionIdLatest(TransactionId mainxid,</span>
+<span class="lineNum">     366 </span>                :            :                     int nxids, const TransactionId *xids)
+<span class="lineNum">     367 </span>                :            : {
+<span class="lineNum">     368 </span>                :            :     TransactionId result;
+<span class="lineNum">     369 </span>                :            : 
+<span class="lineNum">     370 </span>                :            :     /*
+<span class="lineNum">     371 </span>                :            :      * In practice it is highly likely that the xids[] array is sorted, and so
+<span class="lineNum">     372 </span>                :            :      * we could save some cycles by just taking the last child XID, but this
+<span class="lineNum">     373 </span>                :            :      * probably isn't so performance-critical that it's worth depending on
+<span class="lineNum">     374 </span>                :            :      * that assumption.  But just to show we're not totally stupid, scan the
+<span class="lineNum">     375 </span>                :            :      * array back-to-front to avoid useless assignments.
+<span class="lineNum">     376 </span>                :            :      */
+<span class="lineNum">     377 </span>                :<span class="lineCov">      33302 :     result = mainxid;</span>
+<span class="lineNum">     378 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 33302 times"> + </span>]:<span class="lineCov">      33302 :     while (--nxids &gt;= 0)</span>
+<span class="lineNum">     379 </span>                :            :     {
+<span class="lineNum">     380 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (TransactionIdPrecedes(result, xids[nxids]))</span>
+<span class="lineNum">     381 </span>                :<span class="lineNoCov">          0 :             result = xids[nxids];</span>
+<span class="lineNum">     382 </span>                :            :     }
+<span class="lineNum">     383 </span>                :<span class="lineCov">      33302 :     return result;</span>
+<span class="lineNum">     384 </span>                :            : }
+<span class="lineNum">     385 </span>                :            : 
+<span class="lineNum">     386 </span>                :            : 
+<span class="lineNum">     387 </span>                :            : /*
+<span class="lineNum">     388 </span>                :            :  * TransactionIdGetCommitLSN
+<span class="lineNum">     389 </span>                :            :  *
+<span class="lineNum">     390 </span>                :            :  * This function returns an LSN that is late enough to be able
+<span class="lineNum">     391 </span>                :            :  * to guarantee that if we flush up to the LSN returned then we
+<span class="lineNum">     392 </span>                :            :  * will have flushed the transaction's commit record to disk.
+<span class="lineNum">     393 </span>                :            :  *
+<span class="lineNum">     394 </span>                :            :  * The result is not necessarily the exact LSN of the transaction's
+<span class="lineNum">     395 </span>                :            :  * commit record!  For example, for long-past transactions (those whose
+<span class="lineNum">     396 </span>                :            :  * clog pages already migrated to disk), we'll return InvalidXLogRecPtr.
+<span class="lineNum">     397 </span>                :            :  * Also, because we group transactions on the same clog page to conserve
+<span class="lineNum">     398 </span>                :            :  * storage, we might return the LSN of a later transaction that falls into
+<span class="lineNum">     399 </span>                :            :  * the same group.
+<a name="400"><span class="lineNum">     400 </span>                :            :  */</a>
+<span class="lineNum">     401 </span>                :            : XLogRecPtr
+<span class="lineNum">     402 </span>                :<span class="lineCov">      68783 : TransactionIdGetCommitLSN(TransactionId xid)</span>
+<span class="lineNum">     403 </span>                :            : {
+<span class="lineNum">     404 </span>                :            :     XLogRecPtr  result;
+<span class="lineNum">     405 </span>                :            : 
+<span class="lineNum">     406 </span>                :            :     /*
+<span class="lineNum">     407 </span>                :            :      * Currently, all uses of this function are for xids that were just
+<span class="lineNum">     408 </span>                :            :      * reported to be committed by TransactionLogFetch, so we expect that
+<span class="lineNum">     409 </span>                :            :      * checking TransactionLogFetch's cache will usually succeed and avoid an
+<span class="lineNum">     410 </span>                :            :      * extra trip to shared memory.
+<span class="lineNum">     411 </span>                :            :      */
+<span class="lineNum">     412 </span>        [<span class="branchCov" title="Branch 0 was taken 68783 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">      68783 :     if (TransactionIdEquals(xid, cachedFetchXid))</span>
+<span class="lineNum">     413 </span>                :<span class="lineCov">      68783 :         return cachedCommitLSN;</span>
+<span class="lineNum">     414 </span>                :            : 
+<span class="lineNum">     415 </span>                :            :     /* Special XIDs are always known committed */
+<span class="lineNum">     416 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!TransactionIdIsNormal(xid))</span>
+<span class="lineNum">     417 </span>                :<span class="lineNoCov">          0 :         return InvalidXLogRecPtr;</span>
+<span class="lineNum">     418 </span>                :            : 
+<span class="lineNum">     419 </span>                :            :     /*
+<span class="lineNum">     420 </span>                :            :      * Get the transaction status.
+<span class="lineNum">     421 </span>                :            :      */
+<span class="lineNum">     422 </span>                :<span class="lineNoCov">          0 :     (void) TransactionIdGetStatus(xid, &amp;result);</span>
+<span class="lineNum">     423 </span>                :            : 
+<span class="lineNum">     424 </span>                :<span class="lineCov">      68783 :     return result;</span>
+<span class="lineNum">     425 </span>                :            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

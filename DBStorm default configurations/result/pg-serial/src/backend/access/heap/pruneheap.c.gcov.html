@@ -1,0 +1,944 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/access/heap/pruneheap.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/access/heap</a> - pruneheap.c<span style="font-size: 80%;"> (source / <a href="pruneheap.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">169</td>
+            <td class="headerCovTableEntry">206</td>
+            <td class="headerCovTableEntryMed">82.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:33:39</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">8</td>
+            <td class="headerCovTableEntry">9</td>
+            <td class="headerCovTableEntryMed">88.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">130</td>
+            <td class="headerCovTableEntry">223</td>
+            <td class="headerCovTableEntryLo">58.3 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">           Branch data     Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>                :            : /*-------------------------------------------------------------------------</a>
+<span class="lineNum">       2 </span>                :            :  *
+<span class="lineNum">       3 </span>                :            :  * pruneheap.c
+<span class="lineNum">       4 </span>                :            :  *    heap page pruning and HOT-chain management code
+<span class="lineNum">       5 </span>                :            :  *
+<span class="lineNum">       6 </span>                :            :  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+<span class="lineNum">       7 </span>                :            :  * Portions Copyright (c) 1994, Regents of the University of California
+<span class="lineNum">       8 </span>                :            :  *
+<span class="lineNum">       9 </span>                :            :  *
+<span class="lineNum">      10 </span>                :            :  * IDENTIFICATION
+<span class="lineNum">      11 </span>                :            :  *    src/backend/access/heap/pruneheap.c
+<span class="lineNum">      12 </span>                :            :  *
+<span class="lineNum">      13 </span>                :            :  *-------------------------------------------------------------------------
+<span class="lineNum">      14 </span>                :            :  */
+<span class="lineNum">      15 </span>                :            : #include &quot;postgres.h&quot;
+<span class="lineNum">      16 </span>                :            : 
+<span class="lineNum">      17 </span>                :            : #include &quot;access/heapam.h&quot;
+<span class="lineNum">      18 </span>                :            : #include &quot;access/heapam_xlog.h&quot;
+<span class="lineNum">      19 </span>                :            : #include &quot;access/transam.h&quot;
+<span class="lineNum">      20 </span>                :            : #include &quot;access/htup_details.h&quot;
+<span class="lineNum">      21 </span>                :            : #include &quot;access/xlog.h&quot;
+<span class="lineNum">      22 </span>                :            : #include &quot;catalog/catalog.h&quot;
+<span class="lineNum">      23 </span>                :            : #include &quot;miscadmin.h&quot;
+<span class="lineNum">      24 </span>                :            : #include &quot;pgstat.h&quot;
+<span class="lineNum">      25 </span>                :            : #include &quot;storage/bufmgr.h&quot;
+<span class="lineNum">      26 </span>                :            : #include &quot;utils/snapmgr.h&quot;
+<span class="lineNum">      27 </span>                :            : #include &quot;utils/rel.h&quot;
+<span class="lineNum">      28 </span>                :            : 
+<span class="lineNum">      29 </span>                :            : /* Working data for heap_page_prune and subroutines */
+<span class="lineNum">      30 </span>                :            : typedef struct
+<span class="lineNum">      31 </span>                :            : {
+<span class="lineNum">      32 </span>                :            :     TransactionId new_prune_xid;    /* new prune hint value for page */
+<span class="lineNum">      33 </span>                :            :     TransactionId latestRemovedXid; /* latest xid to be removed by this prune */
+<span class="lineNum">      34 </span>                :            :     int         nredirected;    /* numbers of entries in arrays below */
+<span class="lineNum">      35 </span>                :            :     int         ndead;
+<span class="lineNum">      36 </span>                :            :     int         nunused;
+<span class="lineNum">      37 </span>                :            :     /* arrays that accumulate indexes of items to be changed */
+<span class="lineNum">      38 </span>                :            :     OffsetNumber redirected[MaxHeapTuplesPerPage * 2];
+<span class="lineNum">      39 </span>                :            :     OffsetNumber nowdead[MaxHeapTuplesPerPage];
+<span class="lineNum">      40 </span>                :            :     OffsetNumber nowunused[MaxHeapTuplesPerPage];
+<span class="lineNum">      41 </span>                :            :     /* marked[i] is true if item i is entered in one of the above arrays */
+<span class="lineNum">      42 </span>                :            :     bool        marked[MaxHeapTuplesPerPage + 1];
+<span class="lineNum">      43 </span>                :            : } PruneState;
+<span class="lineNum">      44 </span>                :            : 
+<span class="lineNum">      45 </span>                :            : /* Local functions */
+<span class="lineNum">      46 </span>                :            : static int  heap_prune_chain(Relation relation, Buffer buffer,
+<span class="lineNum">      47 </span>                :            :                              OffsetNumber rootoffnum,
+<span class="lineNum">      48 </span>                :            :                              TransactionId OldestXmin,
+<span class="lineNum">      49 </span>                :            :                              PruneState *prstate);
+<span class="lineNum">      50 </span>                :            : static void heap_prune_record_prunable(PruneState *prstate, TransactionId xid);
+<span class="lineNum">      51 </span>                :            : static void heap_prune_record_redirect(PruneState *prstate,
+<span class="lineNum">      52 </span>                :            :                                        OffsetNumber offnum, OffsetNumber rdoffnum);
+<span class="lineNum">      53 </span>                :            : static void heap_prune_record_dead(PruneState *prstate, OffsetNumber offnum);
+<span class="lineNum">      54 </span>                :            : static void heap_prune_record_unused(PruneState *prstate, OffsetNumber offnum);
+<span class="lineNum">      55 </span>                :            : 
+<span class="lineNum">      56 </span>                :            : 
+<span class="lineNum">      57 </span>                :            : /*
+<span class="lineNum">      58 </span>                :            :  * Optionally prune and repair fragmentation in the specified page.
+<span class="lineNum">      59 </span>                :            :  *
+<span class="lineNum">      60 </span>                :            :  * This is an opportunistic function.  It will perform housekeeping
+<span class="lineNum">      61 </span>                :            :  * only if the page heuristically looks like a candidate for pruning and we
+<span class="lineNum">      62 </span>                :            :  * can acquire buffer cleanup lock without blocking.
+<span class="lineNum">      63 </span>                :            :  *
+<span class="lineNum">      64 </span>                :            :  * Note: this is called quite often.  It's important that it fall out quickly
+<span class="lineNum">      65 </span>                :            :  * if there's not any use in pruning.
+<span class="lineNum">      66 </span>                :            :  *
+<span class="lineNum">      67 </span>                :            :  * Caller must have pin on the buffer, and must *not* have a lock on it.
+<span class="lineNum">      68 </span>                :            :  *
+<span class="lineNum">      69 </span>                :            :  * OldestXmin is the cutoff XID used to distinguish whether tuples are DEAD
+<span class="lineNum">      70 </span>                :            :  * or RECENTLY_DEAD (see HeapTupleSatisfiesVacuum).
+<a name="71"><span class="lineNum">      71 </span>                :            :  */</a>
+<span class="lineNum">      72 </span>                :            : void
+<span class="lineNum">      73 </span>                :<span class="lineCov">    9020575 : heap_page_prune_opt(Relation relation, Buffer buffer)</span>
+<span class="lineNum">      74 </span>                :            : {
+<span class="lineNum">      75 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 9020575 times"> + </span>]:<span class="lineCov">    9020575 :     Page        page = BufferGetPage(buffer);</span>
+<span class="lineNum">      76 </span>                :            :     Size        minfree;
+<span class="lineNum">      77 </span>                :            :     TransactionId OldestXmin;
+<span class="lineNum">      78 </span>                :            : 
+<span class="lineNum">      79 </span>                :            :     /*
+<span class="lineNum">      80 </span>                :            :      * We can't write WAL in recovery mode, so there's no point trying to
+<span class="lineNum">      81 </span>                :            :      * clean the page. The master will likely issue a cleaning WAL record soon
+<span class="lineNum">      82 </span>                :            :      * anyway, so this is no particular loss.
+<span class="lineNum">      83 </span>                :            :      */
+<span class="lineNum">      84 </span>        [<span class="branchNoCov" title="Branch 1 was not taken"> - </span><span class="branchCov" title="Branch 2 was taken 9020575 times"> + </span>]:<span class="lineCov">    9020575 :     if (RecoveryInProgress())</span>
+<span class="lineNum">      85 </span>                :<span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">      86 </span>                :            : 
+<span class="lineNum">      87 </span>                :            :     /*
+<span class="lineNum">      88 </span>                :            :      * Use the appropriate xmin horizon for this relation. If it's a proper
+<span class="lineNum">      89 </span>                :            :      * catalog relation or a user defined, additional, catalog relation, we
+<span class="lineNum">      90 </span>                :            :      * need to use the horizon that includes slots, otherwise the data-only
+<span class="lineNum">      91 </span>                :            :      * horizon can be used. Note that the toast relation of user defined
+<span class="lineNum">      92 </span>                :            :      * relations are *not* considered catalog relations.
+<span class="lineNum">      93 </span>                :            :      *
+<span class="lineNum">      94 </span>                :            :      * It is OK to apply the old snapshot limit before acquiring the cleanup
+<span class="lineNum">      95 </span>                :            :      * lock because the worst that can happen is that we are not quite as
+<span class="lineNum">      96 </span>                :            :      * aggressive about the cleanup (by however many transaction IDs are
+<span class="lineNum">      97 </span>                :            :      * consumed between this point and acquiring the lock).  This allows us to
+<span class="lineNum">      98 </span>                :            :      * save significant overhead in the case where the page is found not to be
+<span class="lineNum">      99 </span>                :            :      * prunable.
+<span class="lineNum">     100 </span>                :            :      */
+<span class="lineNum">     101 </span>[<span class="branchCov" title="Branch 1 was taken 8292345 times"> + </span><span class="branchCov" title="Branch 2 was taken 728230 times"> + </span>][<span class="branchCov" title="Branch 3 was taken 8292345 times"> + </span><span class="branchNoCov" title="Branch 4 was not taken"> - </span>]:<span class="lineCov">   17312920 :     if (IsCatalogRelation(relation) ||</span>
+<span class="lineNum">         </span>        [<span class="branchNoCov" title="Branch 5 was not taken"> - </span><span class="branchCov" title="Branch 6 was taken 8292345 times"> + </span>]
+<span class="lineNum">     102 </span>[<span class="branchCov" title="Branch 0 was taken 8292345 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchCov" title="Branch 3 was taken 8292345 times"> + </span><span class="branchNoCov" title="Branch 4 was not taken"> - </span>]:<span class="lineCov">    8292345 :         RelationIsAccessibleInLogicalDecoding(relation))</span>
+<span class="lineNum">         </span>[<span class="branchNoExec" title="Branch 5 was not executed"> # </span><span class="branchNoExec" title="Branch 6 was not executed"> # </span>][<span class="branchNoExec" title="Branch 7 was not executed"> # </span><span class="branchNoExec" title="Branch 8 was not executed"> # </span>]
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 9 was not executed"> # </span><span class="branchNoExec" title="Branch 10 was not executed"> # </span>]
+<span class="lineNum">     103 </span>                :<span class="lineCov">     728230 :         OldestXmin = RecentGlobalXmin;</span>
+<span class="lineNum">     104 </span>                :            :     else
+<span class="lineNum">     105 </span>                :<span class="lineCov">    8292345 :         OldestXmin =</span>
+<span class="lineNum">     106 </span>                :<span class="lineCov">    8292345 :             TransactionIdLimitedForOldSnapshots(RecentGlobalDataXmin,</span>
+<span class="lineNum">     107 </span>                :            :                                                 relation);
+<span class="lineNum">     108 </span>                :            : 
+<span class="lineNum">     109 </span>                :            :     Assert(TransactionIdIsValid(OldestXmin));
+<span class="lineNum">     110 </span>                :            : 
+<span class="lineNum">     111 </span>                :            :     /*
+<span class="lineNum">     112 </span>                :            :      * Let's see if we really need pruning.
+<span class="lineNum">     113 </span>                :            :      *
+<span class="lineNum">     114 </span>                :            :      * Forget it if page is not hinted to contain something prunable that's
+<span class="lineNum">     115 </span>                :            :      * older than OldestXmin.
+<span class="lineNum">     116 </span>                :            :      */
+<span class="lineNum">     117 </span>[<span class="branchCov" title="Branch 0 was taken 7196800 times"> + </span><span class="branchCov" title="Branch 1 was taken 1823775 times"> + </span>][<span class="branchCov" title="Branch 3 was taken 4642529 times"> + </span><span class="branchCov" title="Branch 4 was taken 2554271 times"> + </span>]:<span class="lineCov">    9020575 :     if (!PageIsPrunable(page, OldestXmin))</span>
+<span class="lineNum">         </span>        [<span class="branchCov" title="Branch 5 was taken 4378046 times"> + </span><span class="branchCov" title="Branch 6 was taken 4642529 times"> + </span>]
+<span class="lineNum">     118 </span>                :<span class="lineCov">    4378046 :         return;</span>
+<span class="lineNum">     119 </span>                :            : 
+<span class="lineNum">     120 </span>                :            :     /*
+<span class="lineNum">     121 </span>                :            :      * We prune when a previous UPDATE failed to find enough space on the page
+<span class="lineNum">     122 </span>                :            :      * for a new tuple version, or when free space falls below the relation's
+<span class="lineNum">     123 </span>                :            :      * fill-factor target (but not less than 10%).
+<span class="lineNum">     124 </span>                :            :      *
+<span class="lineNum">     125 </span>                :            :      * Checking free space here is questionable since we aren't holding any
+<span class="lineNum">     126 </span>                :            :      * lock on the buffer; in the worst case we could get a bogus answer. It's
+<span class="lineNum">     127 </span>                :            :      * unlikely to be *seriously* wrong, though, since reading either pd_lower
+<span class="lineNum">     128 </span>                :            :      * or pd_upper is probably atomic.  Avoiding taking a lock seems more
+<span class="lineNum">     129 </span>                :            :      * important than sometimes getting a wrong answer in what is after all
+<span class="lineNum">     130 </span>                :            :      * just a heuristic estimate.
+<span class="lineNum">     131 </span>                :            :      */
+<span class="lineNum">     132 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 4642529 times"> + </span>]:<span class="lineCov">    4642529 :     minfree = RelationGetTargetPageFreeSpace(relation,</span>
+<span class="lineNum">     133 </span>                :            :                                              HEAP_DEFAULT_FILLFACTOR);
+<span class="lineNum">     134 </span>                :<span class="lineCov">    4642529 :     minfree = Max(minfree, BLCKSZ / 10);</span>
+<span class="lineNum">     135 </span>                :            : 
+<span class="lineNum">     136 </span>[<span class="branchCov" title="Branch 0 was taken 4628784 times"> + </span><span class="branchCov" title="Branch 1 was taken 13745 times"> + </span>][<span class="branchCov" title="Branch 3 was taken 19220 times"> + </span><span class="branchCov" title="Branch 4 was taken 4609564 times"> + </span>]:<span class="lineCov">    4642529 :     if (PageIsFull(page) || PageGetHeapFreeSpace(page) &lt; minfree)</span>
+<span class="lineNum">     137 </span>                :            :     {
+<span class="lineNum">     138 </span>                :            :         /* OK, try to get exclusive buffer lock */
+<span class="lineNum">     139 </span>        [<span class="branchCov" title="Branch 1 was taken 9422 times"> + </span><span class="branchCov" title="Branch 2 was taken 23543 times"> + </span>]:<span class="lineCov">      32965 :         if (!ConditionalLockBufferForCleanup(buffer))</span>
+<span class="lineNum">     140 </span>                :<span class="lineCov">       9422 :             return;</span>
+<span class="lineNum">     141 </span>                :            : 
+<span class="lineNum">     142 </span>                :            :         /*
+<span class="lineNum">     143 </span>                :            :          * Now that we have buffer lock, get accurate information about the
+<span class="lineNum">     144 </span>                :            :          * page's free space, and recheck the heuristic about whether to
+<span class="lineNum">     145 </span>                :            :          * prune. (We needn't recheck PageIsPrunable, since no one else could
+<span class="lineNum">     146 </span>                :            :          * have pruned while we hold pin.)
+<span class="lineNum">     147 </span>                :            :          */
+<span class="lineNum">     148 </span>[<span class="branchCov" title="Branch 0 was taken 10133 times"> + </span><span class="branchCov" title="Branch 1 was taken 13410 times"> + </span>][<span class="branchCov" title="Branch 3 was taken 10133 times"> + </span><span class="branchNoCov" title="Branch 4 was not taken"> - </span>]:<span class="lineCov">      23543 :         if (PageIsFull(page) || PageGetHeapFreeSpace(page) &lt; minfree)</span>
+<span class="lineNum">     149 </span>                :            :         {
+<span class="lineNum">     150 </span>                :<span class="lineCov">      23543 :             TransactionId ignore = InvalidTransactionId;    /* return value not</span>
+<span class="lineNum">     151 </span>                :            :                                                              * needed */
+<span class="lineNum">     152 </span>                :            : 
+<span class="lineNum">     153 </span>                :            :             /* OK to prune */
+<span class="lineNum">     154 </span>                :<span class="lineCov">      23543 :             (void) heap_page_prune(relation, buffer, OldestXmin, true, &amp;ignore);</span>
+<span class="lineNum">     155 </span>                :            :         }
+<span class="lineNum">     156 </span>                :            : 
+<span class="lineNum">     157 </span>                :            :         /* And release buffer lock */
+<span class="lineNum">     158 </span>                :<span class="lineCov">      23543 :         LockBuffer(buffer, BUFFER_LOCK_UNLOCK);</span>
+<span class="lineNum">     159 </span>                :            :     }
+<span class="lineNum">     160 </span>                :            : }
+<span class="lineNum">     161 </span>                :            : 
+<span class="lineNum">     162 </span>                :            : 
+<span class="lineNum">     163 </span>                :            : /*
+<span class="lineNum">     164 </span>                :            :  * Prune and repair fragmentation in the specified page.
+<span class="lineNum">     165 </span>                :            :  *
+<span class="lineNum">     166 </span>                :            :  * Caller must have pin and buffer cleanup lock on the page.
+<span class="lineNum">     167 </span>                :            :  *
+<span class="lineNum">     168 </span>                :            :  * OldestXmin is the cutoff XID used to distinguish whether tuples are DEAD
+<span class="lineNum">     169 </span>                :            :  * or RECENTLY_DEAD (see HeapTupleSatisfiesVacuum).
+<span class="lineNum">     170 </span>                :            :  *
+<span class="lineNum">     171 </span>                :            :  * If report_stats is true then we send the number of reclaimed heap-only
+<span class="lineNum">     172 </span>                :            :  * tuples to pgstats.  (This must be false during vacuum, since vacuum will
+<span class="lineNum">     173 </span>                :            :  * send its own new total to pgstats, and we don't want this delta applied
+<span class="lineNum">     174 </span>                :            :  * on top of that.)
+<span class="lineNum">     175 </span>                :            :  *
+<span class="lineNum">     176 </span>                :            :  * Returns the number of tuples deleted from the page and sets
+<span class="lineNum">     177 </span>                :            :  * latestRemovedXid.
+<a name="178"><span class="lineNum">     178 </span>                :            :  */</a>
+<span class="lineNum">     179 </span>                :            : int
+<span class="lineNum">     180 </span>                :<span class="lineCov">      31548 : heap_page_prune(Relation relation, Buffer buffer, TransactionId OldestXmin,</span>
+<span class="lineNum">     181 </span>                :            :                 bool report_stats, TransactionId *latestRemovedXid)
+<span class="lineNum">     182 </span>                :            : {
+<span class="lineNum">     183 </span>                :<span class="lineCov">      31548 :     int         ndeleted = 0;</span>
+<span class="lineNum">     184 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 31548 times"> + </span>]:<span class="lineCov">      31548 :     Page        page = BufferGetPage(buffer);</span>
+<span class="lineNum">     185 </span>                :            :     OffsetNumber offnum,
+<span class="lineNum">     186 </span>                :            :                 maxoff;
+<span class="lineNum">     187 </span>                :            :     PruneState  prstate;
+<span class="lineNum">     188 </span>                :            : 
+<span class="lineNum">     189 </span>                :            :     /*
+<span class="lineNum">     190 </span>                :            :      * Our strategy is to scan the page and make lists of items to change,
+<span class="lineNum">     191 </span>                :            :      * then apply the changes within a critical section.  This keeps as much
+<span class="lineNum">     192 </span>                :            :      * logic as possible out of the critical section, and also ensures that
+<span class="lineNum">     193 </span>                :            :      * WAL replay will work the same as the normal case.
+<span class="lineNum">     194 </span>                :            :      *
+<span class="lineNum">     195 </span>                :            :      * First, initialize the new pd_prune_xid value to zero (indicating no
+<span class="lineNum">     196 </span>                :            :      * prunable tuples).  If we find any tuples which may soon become
+<span class="lineNum">     197 </span>                :            :      * prunable, we will save the lowest relevant XID in new_prune_xid. Also
+<span class="lineNum">     198 </span>                :            :      * initialize the rest of our working state.
+<span class="lineNum">     199 </span>                :            :      */
+<span class="lineNum">     200 </span>                :<span class="lineCov">      31548 :     prstate.new_prune_xid = InvalidTransactionId;</span>
+<span class="lineNum">     201 </span>                :<span class="lineCov">      31548 :     prstate.latestRemovedXid = *latestRemovedXid;</span>
+<span class="lineNum">     202 </span>                :<span class="lineCov">      31548 :     prstate.nredirected = prstate.ndead = prstate.nunused = 0;</span>
+<span class="lineNum">     203 </span>                :<span class="lineCov">      31548 :     memset(prstate.marked, 0, sizeof(prstate.marked));</span>
+<span class="lineNum">     204 </span>                :            : 
+<span class="lineNum">     205 </span>                :            :     /* Scan the page */
+<span class="lineNum">     206 </span>        [<span class="branchCov" title="Branch 0 was taken 31548 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">      31548 :     maxoff = PageGetMaxOffsetNumber(page);</span>
+<span class="lineNum">     207 </span>        [<span class="branchCov" title="Branch 0 was taken 1226016 times"> + </span><span class="branchCov" title="Branch 1 was taken 31548 times"> + </span>]:<span class="lineCov">    1257564 :     for (offnum = FirstOffsetNumber;</span>
+<span class="lineNum">     208 </span>                :            :          offnum &lt;= maxoff;
+<span class="lineNum">     209 </span>                :<span class="lineCov">    1226016 :          offnum = OffsetNumberNext(offnum))</span>
+<span class="lineNum">     210 </span>                :            :     {
+<span class="lineNum">     211 </span>                :            :         ItemId      itemid;
+<span class="lineNum">     212 </span>                :            : 
+<span class="lineNum">     213 </span>                :            :         /* Ignore items already processed as part of an earlier chain */
+<span class="lineNum">     214 </span>        [<span class="branchCov" title="Branch 0 was taken 28728 times"> + </span><span class="branchCov" title="Branch 1 was taken 1197288 times"> + </span>]:<span class="lineCov">    1226016 :         if (prstate.marked[offnum])</span>
+<span class="lineNum">     215 </span>                :<span class="lineCov">      28728 :             continue;</span>
+<span class="lineNum">     216 </span>                :            : 
+<span class="lineNum">     217 </span>                :            :         /* Nothing to do if slot is empty or already dead */
+<span class="lineNum">     218 </span>                :<span class="lineCov">    1197288 :         itemid = PageGetItemId(page, offnum);</span>
+<span class="lineNum">     219 </span>[<span class="branchCov" title="Branch 0 was taken 1111427 times"> + </span><span class="branchCov" title="Branch 1 was taken 85861 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 591122 times"> + </span><span class="branchCov" title="Branch 3 was taken 520305 times"> + </span>]:<span class="lineCov">    1197288 :         if (!ItemIdIsUsed(itemid) || ItemIdIsDead(itemid))</span>
+<span class="lineNum">     220 </span>                :<span class="lineCov">     676983 :             continue;</span>
+<span class="lineNum">     221 </span>                :            : 
+<span class="lineNum">     222 </span>                :            :         /* Process this item or chain of items */
+<span class="lineNum">     223 </span>                :<span class="lineCov">     520305 :         ndeleted += heap_prune_chain(relation, buffer, offnum,</span>
+<span class="lineNum">     224 </span>                :            :                                      OldestXmin,
+<span class="lineNum">     225 </span>                :            :                                      &amp;prstate);
+<span class="lineNum">     226 </span>                :            :     }
+<span class="lineNum">     227 </span>                :            : 
+<span class="lineNum">     228 </span>                :            :     /* Any error while applying the changes is critical */
+<span class="lineNum">     229 </span>                :<span class="lineCov">      31548 :     START_CRIT_SECTION();</span>
+<span class="lineNum">     230 </span>                :            : 
+<span class="lineNum">     231 </span>                :            :     /* Have we found any prunable items? */
+<span class="lineNum">     232 </span>[<span class="branchCov" title="Branch 0 was taken 27572 times"> + </span><span class="branchCov" title="Branch 1 was taken 3976 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 14317 times"> + </span><span class="branchCov" title="Branch 3 was taken 13255 times"> + </span>]:<span class="lineCov">      31548 :     if (prstate.nredirected &gt; 0 || prstate.ndead &gt; 0 || prstate.nunused &gt; 0)</span>
+<span class="lineNum">         </span>        [<span class="branchCov" title="Branch 4 was taken 334 times"> + </span><span class="branchCov" title="Branch 5 was taken 13983 times"> + </span>]
+<span class="lineNum">     233 </span>                :            :     {
+<span class="lineNum">     234 </span>                :            :         /*
+<span class="lineNum">     235 </span>                :            :          * Apply the planned item changes, then repair page fragmentation, and
+<span class="lineNum">     236 </span>                :            :          * update the page's hint bit about whether it has free line pointers.
+<span class="lineNum">     237 </span>                :            :          */
+<span class="lineNum">     238 </span>                :<span class="lineCov">      17565 :         heap_page_prune_execute(buffer,</span>
+<span class="lineNum">     239 </span>                :            :                                 prstate.redirected, prstate.nredirected,
+<span class="lineNum">     240 </span>                :            :                                 prstate.nowdead, prstate.ndead,
+<span class="lineNum">     241 </span>                :            :                                 prstate.nowunused, prstate.nunused);
+<span class="lineNum">     242 </span>                :            : 
+<span class="lineNum">     243 </span>                :            :         /*
+<span class="lineNum">     244 </span>                :            :          * Update the page's pd_prune_xid field to either zero, or the lowest
+<span class="lineNum">     245 </span>                :            :          * XID of any soon-prunable tuple.
+<span class="lineNum">     246 </span>                :            :          */
+<span class="lineNum">     247 </span>                :<span class="lineCov">      17565 :         ((PageHeader) page)-&gt;pd_prune_xid = prstate.new_prune_xid;</span>
+<span class="lineNum">     248 </span>                :            : 
+<span class="lineNum">     249 </span>                :            :         /*
+<span class="lineNum">     250 </span>                :            :          * Also clear the &quot;page is full&quot; flag, since there's no point in
+<span class="lineNum">     251 </span>                :            :          * repeating the prune/defrag process until something else happens to
+<span class="lineNum">     252 </span>                :            :          * the page.
+<span class="lineNum">     253 </span>                :            :          */
+<span class="lineNum">     254 </span>                :<span class="lineCov">      17565 :         PageClearFull(page);</span>
+<span class="lineNum">     255 </span>                :            : 
+<span class="lineNum">     256 </span>                :<span class="lineCov">      17565 :         MarkBufferDirty(buffer);</span>
+<span class="lineNum">     257 </span>                :            : 
+<span class="lineNum">     258 </span>                :            :         /*
+<span class="lineNum">     259 </span>                :            :          * Emit a WAL HEAP_CLEAN record showing what we did
+<span class="lineNum">     260 </span>                :            :          */
+<span class="lineNum">     261 </span>        [<span class="branchCov" title="Branch 0 was taken 17565 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">      35130 :         if (RelationNeedsWAL(relation))</span>
+<span class="lineNum">     262 </span>                :            :         {
+<span class="lineNum">     263 </span>                :            :             XLogRecPtr  recptr;
+<span class="lineNum">     264 </span>                :            : 
+<span class="lineNum">     265 </span>                :<span class="lineCov">      17565 :             recptr = log_heap_clean(relation, buffer,</span>
+<span class="lineNum">     266 </span>                :            :                                     prstate.redirected, prstate.nredirected,
+<span class="lineNum">     267 </span>                :            :                                     prstate.nowdead, prstate.ndead,
+<span class="lineNum">     268 </span>                :            :                                     prstate.nowunused, prstate.nunused,
+<span class="lineNum">     269 </span>                :            :                                     prstate.latestRemovedXid);
+<span class="lineNum">     270 </span>                :            : 
+<span class="lineNum">     271 </span>[<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 17565 times"> + </span>][<span class="branchNoCov" title="Branch 2 was not taken"> - </span><span class="branchCov" title="Branch 3 was taken 17565 times"> + </span>]:<span class="lineCov">      17565 :             PageSetLSN(BufferGetPage(buffer), recptr);</span>
+<span class="lineNum">     272 </span>                :            :         }
+<span class="lineNum">     273 </span>                :            :     }
+<span class="lineNum">     274 </span>                :            :     else
+<span class="lineNum">     275 </span>                :            :     {
+<span class="lineNum">     276 </span>                :            :         /*
+<span class="lineNum">     277 </span>                :            :          * If we didn't prune anything, but have found a new value for the
+<span class="lineNum">     278 </span>                :            :          * pd_prune_xid field, update it and mark the buffer dirty. This is
+<span class="lineNum">     279 </span>                :            :          * treated as a non-WAL-logged hint.
+<span class="lineNum">     280 </span>                :            :          *
+<span class="lineNum">     281 </span>                :            :          * Also clear the &quot;page is full&quot; flag if it is set, since there's no
+<span class="lineNum">     282 </span>                :            :          * point in repeating the prune/defrag process until something else
+<span class="lineNum">     283 </span>                :            :          * happens to the page.
+<span class="lineNum">     284 </span>                :            :          */
+<span class="lineNum">     285 </span>[<span class="branchCov" title="Branch 0 was taken 3383 times"> + </span><span class="branchCov" title="Branch 1 was taken 10600 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 1038 times"> + </span><span class="branchCov" title="Branch 3 was taken 2345 times"> + </span>]:<span class="lineCov">      13983 :         if (((PageHeader) page)-&gt;pd_prune_xid != prstate.new_prune_xid ||</span>
+<span class="lineNum">     286 </span>                :<span class="lineCov">       3383 :             PageIsFull(page))</span>
+<span class="lineNum">     287 </span>                :            :         {
+<span class="lineNum">     288 </span>                :<span class="lineCov">      11638 :             ((PageHeader) page)-&gt;pd_prune_xid = prstate.new_prune_xid;</span>
+<span class="lineNum">     289 </span>                :<span class="lineCov">      11638 :             PageClearFull(page);</span>
+<span class="lineNum">     290 </span>                :<span class="lineCov">      11638 :             MarkBufferDirtyHint(buffer, true);</span>
+<span class="lineNum">     291 </span>                :            :         }
+<span class="lineNum">     292 </span>                :            :     }
+<span class="lineNum">     293 </span>                :            : 
+<span class="lineNum">     294 </span>                :<span class="lineCov">      31548 :     END_CRIT_SECTION();</span>
+<span class="lineNum">     295 </span>                :            : 
+<span class="lineNum">     296 </span>                :            :     /*
+<span class="lineNum">     297 </span>                :            :      * If requested, report the number of tuples reclaimed to pgstats. This is
+<span class="lineNum">     298 </span>                :            :      * ndeleted minus ndead, because we don't want to count a now-DEAD root
+<span class="lineNum">     299 </span>                :            :      * item as a deletion for this purpose.
+<span class="lineNum">     300 </span>                :            :      */
+<span class="lineNum">     301 </span>[<span class="branchCov" title="Branch 0 was taken 23543 times"> + </span><span class="branchCov" title="Branch 1 was taken 8005 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 3674 times"> + </span><span class="branchCov" title="Branch 3 was taken 19869 times"> + </span>]:<span class="lineCov">      31548 :     if (report_stats &amp;&amp; ndeleted &gt; prstate.ndead)</span>
+<span class="lineNum">     302 </span>                :<span class="lineCov">       3674 :         pgstat_update_heap_dead_tuples(relation, ndeleted - prstate.ndead);</span>
+<span class="lineNum">     303 </span>                :            : 
+<span class="lineNum">     304 </span>                :<span class="lineCov">      31548 :     *latestRemovedXid = prstate.latestRemovedXid;</span>
+<span class="lineNum">     305 </span>                :            : 
+<span class="lineNum">     306 </span>                :            :     /*
+<span class="lineNum">     307 </span>                :            :      * XXX Should we update the FSM information of this page ?
+<span class="lineNum">     308 </span>                :            :      *
+<span class="lineNum">     309 </span>                :            :      * There are two schools of thought here. We may not want to update FSM
+<span class="lineNum">     310 </span>                :            :      * information so that the page is not used for unrelated UPDATEs/INSERTs
+<span class="lineNum">     311 </span>                :            :      * and any free space in this page will remain available for further
+<span class="lineNum">     312 </span>                :            :      * UPDATEs in *this* page, thus improving chances for doing HOT updates.
+<span class="lineNum">     313 </span>                :            :      *
+<span class="lineNum">     314 </span>                :            :      * But for a large table and where a page does not receive further UPDATEs
+<span class="lineNum">     315 </span>                :            :      * for a long time, we might waste this space by not updating the FSM
+<span class="lineNum">     316 </span>                :            :      * information. The relation may get extended and fragmented further.
+<span class="lineNum">     317 </span>                :            :      *
+<span class="lineNum">     318 </span>                :            :      * One possibility is to leave &quot;fillfactor&quot; worth of space in this page
+<span class="lineNum">     319 </span>                :            :      * and update FSM with the remaining space.
+<span class="lineNum">     320 </span>                :            :      */
+<span class="lineNum">     321 </span>                :            : 
+<span class="lineNum">     322 </span>                :<span class="lineCov">      31548 :     return ndeleted;</span>
+<span class="lineNum">     323 </span>                :            : }
+<span class="lineNum">     324 </span>                :            : 
+<span class="lineNum">     325 </span>                :            : 
+<span class="lineNum">     326 </span>                :            : /*
+<span class="lineNum">     327 </span>                :            :  * Prune specified line pointer or a HOT chain originating at line pointer.
+<span class="lineNum">     328 </span>                :            :  *
+<span class="lineNum">     329 </span>                :            :  * If the item is an index-referenced tuple (i.e. not a heap-only tuple),
+<span class="lineNum">     330 </span>                :            :  * the HOT chain is pruned by removing all DEAD tuples at the start of the HOT
+<span class="lineNum">     331 </span>                :            :  * chain.  We also prune any RECENTLY_DEAD tuples preceding a DEAD tuple.
+<span class="lineNum">     332 </span>                :            :  * This is OK because a RECENTLY_DEAD tuple preceding a DEAD tuple is really
+<span class="lineNum">     333 </span>                :            :  * DEAD, the OldestXmin test is just too coarse to detect it.
+<span class="lineNum">     334 </span>                :            :  *
+<span class="lineNum">     335 </span>                :            :  * The root line pointer is redirected to the tuple immediately after the
+<span class="lineNum">     336 </span>                :            :  * latest DEAD tuple.  If all tuples in the chain are DEAD, the root line
+<span class="lineNum">     337 </span>                :            :  * pointer is marked LP_DEAD.  (This includes the case of a DEAD simple
+<span class="lineNum">     338 </span>                :            :  * tuple, which we treat as a chain of length 1.)
+<span class="lineNum">     339 </span>                :            :  *
+<span class="lineNum">     340 </span>                :            :  * OldestXmin is the cutoff XID used to identify dead tuples.
+<span class="lineNum">     341 </span>                :            :  *
+<span class="lineNum">     342 </span>                :            :  * We don't actually change the page here, except perhaps for hint-bit updates
+<span class="lineNum">     343 </span>                :            :  * caused by HeapTupleSatisfiesVacuum.  We just add entries to the arrays in
+<span class="lineNum">     344 </span>                :            :  * prstate showing the changes to be made.  Items to be redirected are added
+<span class="lineNum">     345 </span>                :            :  * to the redirected[] array (two entries per redirection); items to be set to
+<span class="lineNum">     346 </span>                :            :  * LP_DEAD state are added to nowdead[]; and items to be set to LP_UNUSED
+<span class="lineNum">     347 </span>                :            :  * state are added to nowunused[].
+<span class="lineNum">     348 </span>                :            :  *
+<span class="lineNum">     349 </span>                :            :  * Returns the number of tuples (to be) deleted from the page.
+<a name="350"><span class="lineNum">     350 </span>                :            :  */</a>
+<span class="lineNum">     351 </span>                :            : static int
+<span class="lineNum">     352 </span>                :<span class="lineCov">     520305 : heap_prune_chain(Relation relation, Buffer buffer, OffsetNumber rootoffnum,</span>
+<span class="lineNum">     353 </span>                :            :                  TransactionId OldestXmin,
+<span class="lineNum">     354 </span>                :            :                  PruneState *prstate)
+<span class="lineNum">     355 </span>                :            : {
+<span class="lineNum">     356 </span>                :<span class="lineCov">     520305 :     int         ndeleted = 0;</span>
+<span class="lineNum">     357 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 520305 times"> + </span>]:<span class="lineCov">     520305 :     Page        dp = (Page) BufferGetPage(buffer);</span>
+<span class="lineNum">     358 </span>                :<span class="lineCov">     520305 :     TransactionId priorXmax = InvalidTransactionId;</span>
+<span class="lineNum">     359 </span>                :            :     ItemId      rootlp;
+<span class="lineNum">     360 </span>                :            :     HeapTupleHeader htup;
+<span class="lineNum">     361 </span>                :<span class="lineCov">     520305 :     OffsetNumber latestdead = InvalidOffsetNumber,</span>
+<span class="lineNum">     362 </span>        [<span class="branchCov" title="Branch 0 was taken 520305 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">     520305 :                 maxoff = PageGetMaxOffsetNumber(dp),</span>
+<span class="lineNum">     363 </span>                :            :                 offnum;
+<span class="lineNum">     364 </span>                :            :     OffsetNumber chainitems[MaxHeapTuplesPerPage];
+<span class="lineNum">     365 </span>                :<span class="lineCov">     520305 :     int         nchain = 0,</span>
+<span class="lineNum">     366 </span>                :            :                 i;
+<span class="lineNum">     367 </span>                :            :     HeapTupleData tup;
+<span class="lineNum">     368 </span>                :            : 
+<span class="lineNum">     369 </span>                :<span class="lineCov">     520305 :     tup.t_tableOid = RelationGetRelid(relation);</span>
+<span class="lineNum">     370 </span>                :            : 
+<span class="lineNum">     371 </span>                :<span class="lineCov">     520305 :     rootlp = PageGetItemId(dp, rootoffnum);</span>
+<span class="lineNum">     372 </span>                :            : 
+<span class="lineNum">     373 </span>                :            :     /*
+<span class="lineNum">     374 </span>                :            :      * If it's a heap-only tuple, then it is not the start of a HOT chain.
+<span class="lineNum">     375 </span>                :            :      */
+<span class="lineNum">     376 </span>        [<span class="branchCov" title="Branch 0 was taken 501044 times"> + </span><span class="branchCov" title="Branch 1 was taken 19261 times"> + </span>]:<span class="lineCov">     520305 :     if (ItemIdIsNormal(rootlp))</span>
+<span class="lineNum">     377 </span>                :            :     {
+<span class="lineNum">     378 </span>                :<span class="lineCov">     501044 :         htup = (HeapTupleHeader) PageGetItem(dp, rootlp);</span>
+<span class="lineNum">     379 </span>                :            : 
+<span class="lineNum">     380 </span>                :<span class="lineCov">     501044 :         tup.t_data = htup;</span>
+<span class="lineNum">     381 </span>                :<span class="lineCov">     501044 :         tup.t_len = ItemIdGetLength(rootlp);</span>
+<span class="lineNum">     382 </span>                :<span class="lineCov">     501044 :         ItemPointerSet(&amp;(tup.t_self), BufferGetBlockNumber(buffer), rootoffnum);</span>
+<span class="lineNum">     383 </span>                :            : 
+<span class="lineNum">     384 </span>        [<span class="branchCov" title="Branch 0 was taken 36537 times"> + </span><span class="branchCov" title="Branch 1 was taken 464507 times"> + </span>]:<span class="lineCov">     501044 :         if (HeapTupleHeaderIsHeapOnly(htup))</span>
+<span class="lineNum">     385 </span>                :            :         {
+<span class="lineNum">     386 </span>                :            :             /*
+<span class="lineNum">     387 </span>                :            :              * If the tuple is DEAD and doesn't chain to anything else, mark
+<span class="lineNum">     388 </span>                :            :              * it unused immediately.  (If it does chain, we can only remove
+<span class="lineNum">     389 </span>                :            :              * it as part of pruning its chain.)
+<span class="lineNum">     390 </span>                :            :              *
+<span class="lineNum">     391 </span>                :            :              * We need this primarily to handle aborted HOT updates, that is,
+<span class="lineNum">     392 </span>                :            :              * XMIN_INVALID heap-only tuples.  Those might not be linked to by
+<span class="lineNum">     393 </span>                :            :              * any chain, since the parent tuple might be re-updated before
+<span class="lineNum">     394 </span>                :            :              * any pruning occurs.  So we have to be able to reap them
+<span class="lineNum">     395 </span>                :            :              * separately from chain-pruning.  (Note that
+<span class="lineNum">     396 </span>                :            :              * HeapTupleHeaderIsHotUpdated will never return true for an
+<span class="lineNum">     397 </span>                :            :              * XMIN_INVALID tuple, so this code will work even when there were
+<span class="lineNum">     398 </span>                :            :              * sequential updates within the aborted transaction.)
+<span class="lineNum">     399 </span>                :            :              *
+<span class="lineNum">     400 </span>                :            :              * Note that we might first arrive at a dead heap-only tuple
+<span class="lineNum">     401 </span>                :            :              * either here or while following a chain below.  Whichever path
+<span class="lineNum">     402 </span>                :            :              * gets there first will mark the tuple unused.
+<span class="lineNum">     403 </span>                :            :              */
+<span class="lineNum">     404 </span>        [<span class="branchCov" title="Branch 1 was taken 8941 times"> + </span><span class="branchCov" title="Branch 2 was taken 27596 times"> + </span>]:<span class="lineCov">      36537 :             if (HeapTupleSatisfiesVacuum(&amp;tup, OldestXmin, buffer)</span>
+<span class="lineNum">     405 </span>[<span class="branchCov" title="Branch 0 was taken 5151 times"> + </span><span class="branchCov" title="Branch 1 was taken 3790 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 5151 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">       8941 :                 == HEAPTUPLE_DEAD &amp;&amp; !HeapTupleHeaderIsHotUpdated(htup))</span>
+<span class="lineNum">         </span>        [<span class="branchCov" title="Branch 4 was taken 17 times"> + </span><span class="branchCov" title="Branch 5 was taken 5134 times"> + </span>]
+<span class="lineNum">     406 </span>                :            :             {
+<span class="lineNum">     407 </span>                :<span class="lineCov">       3807 :                 heap_prune_record_unused(prstate, rootoffnum);</span>
+<span class="lineNum">     408 </span>                :<span class="lineCov">       3807 :                 HeapTupleHeaderAdvanceLatestRemovedXid(htup,</span>
+<span class="lineNum">     409 </span>                :            :                                                        &amp;prstate-&gt;latestRemovedXid);
+<span class="lineNum">     410 </span>                :<span class="lineCov">       3807 :                 ndeleted++;</span>
+<span class="lineNum">     411 </span>                :            :             }
+<span class="lineNum">     412 </span>                :            : 
+<span class="lineNum">     413 </span>                :            :             /* Nothing more to do */
+<span class="lineNum">     414 </span>                :<span class="lineCov">      36537 :             return ndeleted;</span>
+<span class="lineNum">     415 </span>                :            :         }
+<span class="lineNum">     416 </span>                :            :     }
+<span class="lineNum">     417 </span>                :            : 
+<span class="lineNum">     418 </span>                :            :     /* Start from the root tuple */
+<span class="lineNum">     419 </span>                :<span class="lineCov">     483768 :     offnum = rootoffnum;</span>
+<span class="lineNum">     420 </span>                :            : 
+<span class="lineNum">     421 </span>                :            :     /* while not end of the chain */
+<span class="lineNum">     422 </span>                :            :     for (;;)
+<span class="lineNum">     423 </span>                :            :     {
+<span class="lineNum">     424 </span>                :            :         ItemId      lp;
+<span class="lineNum">     425 </span>                :            :         bool        tupdead,
+<span class="lineNum">     426 </span>                :            :                     recent_dead;
+<span class="lineNum">     427 </span>                :            : 
+<span class="lineNum">     428 </span>                :            :         /* Some sanity checks */
+<span class="lineNum">     429 </span>[<span class="branchCov" title="Branch 0 was taken 544464 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchCov" title="Branch 2 was taken 544464 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">     544464 :         if (offnum &lt; FirstOffsetNumber || offnum &gt; maxoff)</span>
+<span class="lineNum">     430 </span>                :            :             break;
+<span class="lineNum">     431 </span>                :            : 
+<span class="lineNum">     432 </span>                :            :         /* If item is already processed, stop --- it must not be same chain */
+<span class="lineNum">     433 </span>        [<span class="branchCov" title="Branch 0 was taken 238 times"> + </span><span class="branchCov" title="Branch 1 was taken 544226 times"> + </span>]:<span class="lineCov">     544464 :         if (prstate-&gt;marked[offnum])</span>
+<span class="lineNum">     434 </span>                :<span class="lineCov">        238 :             break;</span>
+<span class="lineNum">     435 </span>                :            : 
+<span class="lineNum">     436 </span>                :<span class="lineCov">     544226 :         lp = PageGetItemId(dp, offnum);</span>
+<span class="lineNum">     437 </span>                :            : 
+<span class="lineNum">     438 </span>                :            :         /* Unused item obviously isn't part of the chain */
+<span class="lineNum">     439 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 544226 times"> + </span>]:<span class="lineCov">     544226 :         if (!ItemIdIsUsed(lp))</span>
+<span class="lineNum">     440 </span>                :<span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     441 </span>                :            : 
+<span class="lineNum">     442 </span>                :            :         /*
+<span class="lineNum">     443 </span>                :            :          * If we are looking at the redirected root line pointer, jump to the
+<span class="lineNum">     444 </span>                :            :          * first normal tuple in the chain.  If we find a redirect somewhere
+<span class="lineNum">     445 </span>                :            :          * else, stop --- it must not be same chain.
+<span class="lineNum">     446 </span>                :            :          */
+<span class="lineNum">     447 </span>        [<span class="branchCov" title="Branch 0 was taken 19261 times"> + </span><span class="branchCov" title="Branch 1 was taken 524965 times"> + </span>]:<span class="lineCov">     544226 :         if (ItemIdIsRedirected(lp))</span>
+<span class="lineNum">     448 </span>                :            :         {
+<span class="lineNum">     449 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 19261 times"> + </span>]:<span class="lineCov">      19261 :             if (nchain &gt; 0)</span>
+<span class="lineNum">     450 </span>                :<span class="lineNoCov">          0 :                 break;          /* not at start of chain */</span>
+<span class="lineNum">     451 </span>                :<span class="lineCov">      19261 :             chainitems[nchain++] = offnum;</span>
+<span class="lineNum">     452 </span>                :<span class="lineCov">      19261 :             offnum = ItemIdGetRedirect(rootlp);</span>
+<span class="lineNum">     453 </span>                :<span class="lineCov">      19261 :             continue;</span>
+<span class="lineNum">     454 </span>                :            :         }
+<span class="lineNum">     455 </span>                :            : 
+<span class="lineNum">     456 </span>                :            :         /*
+<span class="lineNum">     457 </span>                :            :          * Likewise, a dead line pointer can't be part of the chain. (We
+<span class="lineNum">     458 </span>                :            :          * already eliminated the case of dead root tuple outside this
+<span class="lineNum">     459 </span>                :            :          * function.)
+<span class="lineNum">     460 </span>                :            :          */
+<span class="lineNum">     461 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 524965 times"> + </span>]:<span class="lineCov">     524965 :         if (ItemIdIsDead(lp))</span>
+<span class="lineNum">     462 </span>                :<span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     463 </span>                :            : 
+<span class="lineNum">     464 </span>                :            :         Assert(ItemIdIsNormal(lp));
+<span class="lineNum">     465 </span>                :<span class="lineCov">     524965 :         htup = (HeapTupleHeader) PageGetItem(dp, lp);</span>
+<span class="lineNum">     466 </span>                :            : 
+<span class="lineNum">     467 </span>                :<span class="lineCov">     524965 :         tup.t_data = htup;</span>
+<span class="lineNum">     468 </span>                :<span class="lineCov">     524965 :         tup.t_len = ItemIdGetLength(lp);</span>
+<span class="lineNum">     469 </span>                :<span class="lineCov">     524965 :         ItemPointerSet(&amp;(tup.t_self), BufferGetBlockNumber(buffer), offnum);</span>
+<span class="lineNum">     470 </span>                :            : 
+<span class="lineNum">     471 </span>                :            :         /*
+<span class="lineNum">     472 </span>                :            :          * Check the tuple XMIN against prior XMAX, if any
+<span class="lineNum">     473 </span>                :            :          */
+<span class="lineNum">     474 </span>[<span class="branchCov" title="Branch 0 was taken 41283 times"> + </span><span class="branchCov" title="Branch 1 was taken 483682 times"> + </span>][<span class="branchNoCov" title="Branch 2 was not taken"> - </span><span class="branchCov" title="Branch 3 was taken 41283 times"> + </span>]:<span class="lineCov">     566248 :         if (TransactionIdIsValid(priorXmax) &amp;&amp;</span>
+<span class="lineNum">     475 </span>        [<span class="branchCov" title="Branch 0 was taken 41283 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">      41283 :             !TransactionIdEquals(HeapTupleHeaderGetXmin(htup), priorXmax))</span>
+<span class="lineNum">     476 </span>                :<span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     477 </span>                :            : 
+<span class="lineNum">     478 </span>                :            :         /*
+<span class="lineNum">     479 </span>                :            :          * OK, this tuple is indeed a member of the chain.
+<span class="lineNum">     480 </span>                :            :          */
+<span class="lineNum">     481 </span>                :<span class="lineCov">     524965 :         chainitems[nchain++] = offnum;</span>
+<span class="lineNum">     482 </span>                :            : 
+<span class="lineNum">     483 </span>                :            :         /*
+<span class="lineNum">     484 </span>                :            :          * Check tuple's visibility status.
+<span class="lineNum">     485 </span>                :            :          */
+<span class="lineNum">     486 </span>                :<span class="lineCov">     524965 :         tupdead = recent_dead = false;</span>
+<span class="lineNum">     487 </span>                :            : 
+<span class="lineNum">     488 </span>  [<span class="branchCov" title="Branch 1 was taken 112226 times"> + </span><span class="branchCov" title="Branch 2 was taken 58841 times"> + </span><span class="branchCov" title="Branch 3 was taken 3177 times"> + </span><span class="branchCov" title="Branch 4 was taken 350721 times"> + </span> :<span class="lineCov">     524965 :         switch (HeapTupleSatisfiesVacuum(&amp;tup, OldestXmin, buffer))</span>
+<span class="lineNum">         </span>            <span class="branchNoCov" title="Branch 5 was not taken"> - </span>]
+<span class="lineNum">     489 </span>                :            :         {
+<span class="lineNum">     490 </span>                :            :             case HEAPTUPLE_DEAD:
+<span class="lineNum">     491 </span>                :<span class="lineCov">     112226 :                 tupdead = true;</span>
+<span class="lineNum">     492 </span>                :<span class="lineCov">     112226 :                 break;</span>
+<span class="lineNum">     493 </span>                :            : 
+<span class="lineNum">     494 </span>                :            :             case HEAPTUPLE_RECENTLY_DEAD:
+<span class="lineNum">     495 </span>                :<span class="lineCov">      58841 :                 recent_dead = true;</span>
+<span class="lineNum">     496 </span>                :            : 
+<span class="lineNum">     497 </span>                :            :                 /*
+<span class="lineNum">     498 </span>                :            :                  * This tuple may soon become DEAD.  Update the hint field so
+<span class="lineNum">     499 </span>                :            :                  * that the page is reconsidered for pruning in future.
+<span class="lineNum">     500 </span>                :            :                  */
+<span class="lineNum">     501 </span>        [<span class="branchCov" title="Branch 0 was taken 58841 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">     117682 :                 heap_prune_record_prunable(prstate,</span>
+<span class="lineNum">     502 </span>[<span class="branchCov" title="Branch 0 was taken 230 times"> + </span><span class="branchCov" title="Branch 1 was taken 58611 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 230 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">      58841 :                                            HeapTupleHeaderGetUpdateXid(htup));</span>
+<span class="lineNum">     503 </span>                :<span class="lineCov">      58841 :                 break;</span>
+<span class="lineNum">     504 </span>                :            : 
+<span class="lineNum">     505 </span>                :            :             case HEAPTUPLE_DELETE_IN_PROGRESS:
+<span class="lineNum">     506 </span>                :            : 
+<span class="lineNum">     507 </span>                :            :                 /*
+<span class="lineNum">     508 </span>                :            :                  * This tuple may soon become DEAD.  Update the hint field so
+<span class="lineNum">     509 </span>                :            :                  * that the page is reconsidered for pruning in future.
+<span class="lineNum">     510 </span>                :            :                  */
+<span class="lineNum">     511 </span>        [<span class="branchCov" title="Branch 0 was taken 3177 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">       6354 :                 heap_prune_record_prunable(prstate,</span>
+<span class="lineNum">     512 </span>[<span class="branchCov" title="Branch 0 was taken 67 times"> + </span><span class="branchCov" title="Branch 1 was taken 3110 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 67 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">       3177 :                                            HeapTupleHeaderGetUpdateXid(htup));</span>
+<span class="lineNum">     513 </span>                :<span class="lineCov">       3177 :                 break;</span>
+<span class="lineNum">     514 </span>                :            : 
+<span class="lineNum">     515 </span>                :            :             case HEAPTUPLE_LIVE:
+<span class="lineNum">     516 </span>                :            :             case HEAPTUPLE_INSERT_IN_PROGRESS:
+<span class="lineNum">     517 </span>                :            : 
+<span class="lineNum">     518 </span>                :            :                 /*
+<span class="lineNum">     519 </span>                :            :                  * If we wanted to optimize for aborts, we might consider
+<span class="lineNum">     520 </span>                :            :                  * marking the page prunable when we see INSERT_IN_PROGRESS.
+<span class="lineNum">     521 </span>                :            :                  * But we don't.  See related decisions about when to mark the
+<span class="lineNum">     522 </span>                :            :                  * page prunable in heapam.c.
+<span class="lineNum">     523 </span>                :            :                  */
+<span class="lineNum">     524 </span>                :<span class="lineCov">     350721 :                 break;</span>
+<span class="lineNum">     525 </span>                :            : 
+<span class="lineNum">     526 </span>                :            :             default:
+<span class="lineNum">     527 </span>                :<span class="lineNoCov">          0 :                 elog(ERROR, &quot;unexpected HeapTupleSatisfiesVacuum result&quot;);</span>
+<span class="lineNum">     528 </span>                :            :                 break;
+<span class="lineNum">     529 </span>                :            :         }
+<span class="lineNum">     530 </span>                :            : 
+<span class="lineNum">     531 </span>                :            :         /*
+<span class="lineNum">     532 </span>                :            :          * Remember the last DEAD tuple seen.  We will advance past
+<span class="lineNum">     533 </span>                :            :          * RECENTLY_DEAD tuples just in case there's a DEAD one after them;
+<span class="lineNum">     534 </span>                :            :          * but we can't advance past anything else.  (XXX is it really worth
+<span class="lineNum">     535 </span>                :            :          * continuing to scan beyond RECENTLY_DEAD?  The case where we will
+<span class="lineNum">     536 </span>                :            :          * find another DEAD tuple is a fairly unusual corner case.)
+<span class="lineNum">     537 </span>                :            :          */
+<span class="lineNum">     538 </span>        [<span class="branchCov" title="Branch 0 was taken 112226 times"> + </span><span class="branchCov" title="Branch 1 was taken 412739 times"> + </span>]:<span class="lineCov">     524965 :         if (tupdead)</span>
+<span class="lineNum">     539 </span>                :            :         {
+<span class="lineNum">     540 </span>                :<span class="lineCov">     112226 :             latestdead = offnum;</span>
+<span class="lineNum">     541 </span>                :<span class="lineCov">     112226 :             HeapTupleHeaderAdvanceLatestRemovedXid(htup,</span>
+<span class="lineNum">     542 </span>                :            :                                                    &amp;prstate-&gt;latestRemovedXid);
+<span class="lineNum">     543 </span>                :            :         }
+<span class="lineNum">     544 </span>        [<span class="branchCov" title="Branch 0 was taken 353898 times"> + </span><span class="branchCov" title="Branch 1 was taken 58841 times"> + </span>]:<span class="lineCov">     412739 :         else if (!recent_dead)</span>
+<span class="lineNum">     545 </span>                :<span class="lineCov">     353898 :             break;</span>
+<span class="lineNum">     546 </span>                :            : 
+<span class="lineNum">     547 </span>                :            :         /*
+<span class="lineNum">     548 </span>                :            :          * If the tuple is not HOT-updated, then we are at the end of this
+<span class="lineNum">     549 </span>                :            :          * HOT-update chain.
+<span class="lineNum">     550 </span>                :            :          */
+<span class="lineNum">     551 </span>[<span class="branchCov" title="Branch 0 was taken 41442 times"> + </span><span class="branchCov" title="Branch 1 was taken 129625 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 41442 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">     171067 :         if (!HeapTupleHeaderIsHotUpdated(htup))</span>
+<span class="lineNum">         </span>        [<span class="branchCov" title="Branch 4 was taken 41435 times"> + </span><span class="branchCov" title="Branch 5 was taken 7 times"> + </span>]
+<span class="lineNum">     552 </span>                :            :             break;
+<span class="lineNum">     553 </span>                :            : 
+<span class="lineNum">     554 </span>                :            :         /* HOT implies it can't have moved to different partition */
+<span class="lineNum">     555 </span>                :            :         Assert(!HeapTupleHeaderIndicatesMovedPartitions(htup));
+<span class="lineNum">     556 </span>                :            : 
+<span class="lineNum">     557 </span>                :            :         /*
+<span class="lineNum">     558 </span>                :            :          * Advance to next chain member.
+<span class="lineNum">     559 </span>                :            :          */
+<span class="lineNum">     560 </span>                :            :         Assert(ItemPointerGetBlockNumber(&amp;htup-&gt;t_ctid) ==
+<span class="lineNum">     561 </span>                :            :                BufferGetBlockNumber(buffer));
+<span class="lineNum">     562 </span>                :<span class="lineCov">      41435 :         offnum = ItemPointerGetOffsetNumber(&amp;htup-&gt;t_ctid);</span>
+<span class="lineNum">     563 </span>[<span class="branchCov" title="Branch 0 was taken 41435 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchCov" title="Branch 2 was taken 252 times"> + </span><span class="branchCov" title="Branch 3 was taken 41183 times"> + </span>]:<span class="lineCov">      41435 :         priorXmax = HeapTupleHeaderGetUpdateXid(htup);</span>
+<span class="lineNum">         </span>        [<span class="branchCov" title="Branch 4 was taken 252 times"> + </span><span class="branchNoCov" title="Branch 5 was not taken"> - </span>]
+<span class="lineNum">     564 </span>                :<span class="lineCov">      60696 :     }</span>
+<span class="lineNum">     565 </span>                :            : 
+<span class="lineNum">     566 </span>                :            :     /*
+<span class="lineNum">     567 </span>                :            :      * If we found a DEAD tuple in the chain, adjust the HOT chain so that all
+<span class="lineNum">     568 </span>                :            :      * the DEAD tuples at the start of the chain are removed and the root line
+<span class="lineNum">     569 </span>                :            :      * pointer is appropriately redirected.
+<span class="lineNum">     570 </span>                :            :      */
+<span class="lineNum">     571 </span>[<span class="branchCov" title="Branch 0 was taken 97003 times"> + </span><span class="branchCov" title="Branch 1 was taken 386765 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 97003 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">     483768 :     if (OffsetNumberIsValid(latestdead))</span>
+<span class="lineNum">         </span>        [<span class="branchCov" title="Branch 4 was taken 97003 times"> + </span><span class="branchCov" title="Branch 5 was taken 386765 times"> + </span>]
+<span class="lineNum">     572 </span>                :            :     {
+<span class="lineNum">     573 </span>                :            :         /*
+<span class="lineNum">     574 </span>                :            :          * Mark as unused each intermediate item that we are able to remove
+<span class="lineNum">     575 </span>                :            :          * from the chain.
+<span class="lineNum">     576 </span>                :            :          *
+<span class="lineNum">     577 </span>                :            :          * When the previous item is the last dead tuple seen, we are at the
+<span class="lineNum">     578 </span>                :            :          * right candidate for redirection.
+<span class="lineNum">     579 </span>                :            :          */
+<span class="lineNum">     580 </span>[<span class="branchCov" title="Branch 0 was taken 36122 times"> + </span><span class="branchCov" title="Branch 1 was taken 85256 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 24375 times"> + </span><span class="branchCov" title="Branch 3 was taken 11747 times"> + </span>]:<span class="lineCov">     121378 :         for (i = 1; (i &lt; nchain) &amp;&amp; (chainitems[i - 1] != latestdead); i++)</span>
+<span class="lineNum">     581 </span>                :            :         {
+<span class="lineNum">     582 </span>                :<span class="lineCov">      24375 :             heap_prune_record_unused(prstate, chainitems[i]);</span>
+<span class="lineNum">     583 </span>                :<span class="lineCov">      24375 :             ndeleted++;</span>
+<span class="lineNum">     584 </span>                :            :         }
+<span class="lineNum">     585 </span>                :            : 
+<span class="lineNum">     586 </span>                :            :         /*
+<span class="lineNum">     587 </span>                :            :          * If the root entry had been a normal tuple, we are deleting it, so
+<span class="lineNum">     588 </span>                :            :          * count it in the result.  But changing a redirect (even to DEAD
+<span class="lineNum">     589 </span>                :            :          * state) doesn't count.
+<span class="lineNum">     590 </span>                :            :          */
+<span class="lineNum">     591 </span>        [<span class="branchCov" title="Branch 0 was taken 87851 times"> + </span><span class="branchCov" title="Branch 1 was taken 9152 times"> + </span>]:<span class="lineCov">      97003 :         if (ItemIdIsNormal(rootlp))</span>
+<span class="lineNum">     592 </span>                :<span class="lineCov">      87851 :             ndeleted++;</span>
+<span class="lineNum">     593 </span>                :            : 
+<span class="lineNum">     594 </span>                :            :         /*
+<span class="lineNum">     595 </span>                :            :          * If the DEAD tuple is at the end of the chain, the entire chain is
+<span class="lineNum">     596 </span>                :            :          * dead and the root line pointer can be marked dead.  Otherwise just
+<span class="lineNum">     597 </span>                :            :          * redirect the root to the correct chain member.
+<span class="lineNum">     598 </span>                :            :          */
+<span class="lineNum">     599 </span>        [<span class="branchCov" title="Branch 0 was taken 85256 times"> + </span><span class="branchCov" title="Branch 1 was taken 11747 times"> + </span>]:<span class="lineCov">      97003 :         if (i &gt;= nchain)</span>
+<span class="lineNum">     600 </span>                :<span class="lineCov">      85256 :             heap_prune_record_dead(prstate, rootoffnum);</span>
+<span class="lineNum">     601 </span>                :            :         else
+<span class="lineNum">     602 </span>                :<span class="lineCov">      97003 :             heap_prune_record_redirect(prstate, rootoffnum, chainitems[i]);</span>
+<span class="lineNum">     603 </span>                :            :     }
+<span class="lineNum">     604 </span>[<span class="branchCov" title="Branch 0 was taken 374300 times"> + </span><span class="branchCov" title="Branch 1 was taken 12465 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 86 times"> + </span><span class="branchCov" title="Branch 3 was taken 374214 times"> + </span>]:<span class="lineCov">     386765 :     else if (nchain &lt; 2 &amp;&amp; ItemIdIsRedirected(rootlp))</span>
+<span class="lineNum">     605 </span>                :            :     {
+<span class="lineNum">     606 </span>                :            :         /*
+<span class="lineNum">     607 </span>                :            :          * We found a redirect item that doesn't point to a valid follow-on
+<span class="lineNum">     608 </span>                :            :          * item.  This can happen if the loop in heap_page_prune caused us to
+<span class="lineNum">     609 </span>                :            :          * visit the dead successor of a redirect item before visiting the
+<span class="lineNum">     610 </span>                :            :          * redirect item.  We can clean up by setting the redirect item to
+<span class="lineNum">     611 </span>                :            :          * DEAD state.
+<span class="lineNum">     612 </span>                :            :          */
+<span class="lineNum">     613 </span>                :<span class="lineCov">         86 :         heap_prune_record_dead(prstate, rootoffnum);</span>
+<span class="lineNum">     614 </span>                :            :     }
+<span class="lineNum">     615 </span>                :            : 
+<span class="lineNum">     616 </span>                :<span class="lineCov">     520305 :     return ndeleted;</span>
+<span class="lineNum">     617 </span>                :            : }
+<span class="lineNum">     618 </span>                :            : 
+<a name="619"><span class="lineNum">     619 </span>                :            : /* Record lowest soon-prunable XID */</a>
+<span class="lineNum">     620 </span>                :            : static void
+<span class="lineNum">     621 </span>                :<span class="lineCov">      62018 : heap_prune_record_prunable(PruneState *prstate, TransactionId xid)</span>
+<span class="lineNum">     622 </span>                :            : {
+<span class="lineNum">     623 </span>                :            :     /*
+<span class="lineNum">     624 </span>                :            :      * This should exactly match the PageSetPrunable macro.  We can't store
+<span class="lineNum">     625 </span>                :            :      * directly into the page header yet, so we update working state.
+<span class="lineNum">     626 </span>                :            :      */
+<span class="lineNum">     627 </span>                :            :     Assert(TransactionIdIsNormal(xid));
+<span class="lineNum">     628 </span>  [<span class="branchCov" title="Branch 0 was taken 52087 times"> + </span><span class="branchCov" title="Branch 1 was taken 9931 times"> + </span><span class="branchCov" title="Branch 2 was taken 7159 times"> + </span><span class="branchCov" title="Branch 3 was taken 44928 times"> + </span>]:<span class="lineCov">     114105 :     if (!TransactionIdIsValid(prstate-&gt;new_prune_xid) ||</span>
+<span class="lineNum">     629 </span>                :<span class="lineCov">      52087 :         TransactionIdPrecedes(xid, prstate-&gt;new_prune_xid))</span>
+<span class="lineNum">     630 </span>                :<span class="lineCov">      17090 :         prstate-&gt;new_prune_xid = xid;</span>
+<span class="lineNum">     631 </span>                :<span class="lineCov">      62018 : }</span>
+<span class="lineNum">     632 </span>                :            : 
+<a name="633"><span class="lineNum">     633 </span>                :            : /* Record line pointer to be redirected */</a>
+<span class="lineNum">     634 </span>                :            : static void
+<span class="lineNum">     635 </span>                :<span class="lineCov">      11747 : heap_prune_record_redirect(PruneState *prstate,</span>
+<span class="lineNum">     636 </span>                :            :                            OffsetNumber offnum, OffsetNumber rdoffnum)
+<span class="lineNum">     637 </span>                :            : {
+<span class="lineNum">     638 </span>                :            :     Assert(prstate-&gt;nredirected &lt; MaxHeapTuplesPerPage);
+<span class="lineNum">     639 </span>                :<span class="lineCov">      11747 :     prstate-&gt;redirected[prstate-&gt;nredirected * 2] = offnum;</span>
+<span class="lineNum">     640 </span>                :<span class="lineCov">      11747 :     prstate-&gt;redirected[prstate-&gt;nredirected * 2 + 1] = rdoffnum;</span>
+<span class="lineNum">     641 </span>                :<span class="lineCov">      11747 :     prstate-&gt;nredirected++;</span>
+<span class="lineNum">     642 </span>                :            :     Assert(!prstate-&gt;marked[offnum]);
+<span class="lineNum">     643 </span>                :<span class="lineCov">      11747 :     prstate-&gt;marked[offnum] = true;</span>
+<span class="lineNum">     644 </span>                :            :     Assert(!prstate-&gt;marked[rdoffnum]);
+<span class="lineNum">     645 </span>                :<span class="lineCov">      11747 :     prstate-&gt;marked[rdoffnum] = true;</span>
+<span class="lineNum">     646 </span>                :<span class="lineCov">      11747 : }</span>
+<span class="lineNum">     647 </span>                :            : 
+<a name="648"><span class="lineNum">     648 </span>                :            : /* Record line pointer to be marked dead */</a>
+<span class="lineNum">     649 </span>                :            : static void
+<span class="lineNum">     650 </span>                :<span class="lineCov">      85342 : heap_prune_record_dead(PruneState *prstate, OffsetNumber offnum)</span>
+<span class="lineNum">     651 </span>                :            : {
+<span class="lineNum">     652 </span>                :            :     Assert(prstate-&gt;ndead &lt; MaxHeapTuplesPerPage);
+<span class="lineNum">     653 </span>                :<span class="lineCov">      85342 :     prstate-&gt;nowdead[prstate-&gt;ndead] = offnum;</span>
+<span class="lineNum">     654 </span>                :<span class="lineCov">      85342 :     prstate-&gt;ndead++;</span>
+<span class="lineNum">     655 </span>                :            :     Assert(!prstate-&gt;marked[offnum]);
+<span class="lineNum">     656 </span>                :<span class="lineCov">      85342 :     prstate-&gt;marked[offnum] = true;</span>
+<span class="lineNum">     657 </span>                :<span class="lineCov">      85342 : }</span>
+<span class="lineNum">     658 </span>                :            : 
+<a name="659"><span class="lineNum">     659 </span>                :            : /* Record line pointer to be marked unused */</a>
+<span class="lineNum">     660 </span>                :            : static void
+<span class="lineNum">     661 </span>                :<span class="lineCov">      28182 : heap_prune_record_unused(PruneState *prstate, OffsetNumber offnum)</span>
+<span class="lineNum">     662 </span>                :            : {
+<span class="lineNum">     663 </span>                :            :     Assert(prstate-&gt;nunused &lt; MaxHeapTuplesPerPage);
+<span class="lineNum">     664 </span>                :<span class="lineCov">      28182 :     prstate-&gt;nowunused[prstate-&gt;nunused] = offnum;</span>
+<span class="lineNum">     665 </span>                :<span class="lineCov">      28182 :     prstate-&gt;nunused++;</span>
+<span class="lineNum">     666 </span>                :            :     Assert(!prstate-&gt;marked[offnum]);
+<span class="lineNum">     667 </span>                :<span class="lineCov">      28182 :     prstate-&gt;marked[offnum] = true;</span>
+<span class="lineNum">     668 </span>                :<span class="lineCov">      28182 : }</span>
+<span class="lineNum">     669 </span>                :            : 
+<span class="lineNum">     670 </span>                :            : 
+<span class="lineNum">     671 </span>                :            : /*
+<span class="lineNum">     672 </span>                :            :  * Perform the actual page changes needed by heap_page_prune.
+<span class="lineNum">     673 </span>                :            :  * It is expected that the caller has suitable pin and lock on the
+<span class="lineNum">     674 </span>                :            :  * buffer, and is inside a critical section.
+<span class="lineNum">     675 </span>                :            :  *
+<span class="lineNum">     676 </span>                :            :  * This is split out because it is also used by heap_xlog_clean()
+<span class="lineNum">     677 </span>                :            :  * to replay the WAL record when needed after a crash.  Note that the
+<span class="lineNum">     678 </span>                :            :  * arguments are identical to those of log_heap_clean().
+<a name="679"><span class="lineNum">     679 </span>                :            :  */</a>
+<span class="lineNum">     680 </span>                :            : void
+<span class="lineNum">     681 </span>                :<span class="lineCov">      17565 : heap_page_prune_execute(Buffer buffer,</span>
+<span class="lineNum">     682 </span>                :            :                         OffsetNumber *redirected, int nredirected,
+<span class="lineNum">     683 </span>                :            :                         OffsetNumber *nowdead, int ndead,
+<span class="lineNum">     684 </span>                :            :                         OffsetNumber *nowunused, int nunused)
+<span class="lineNum">     685 </span>                :            : {
+<span class="lineNum">     686 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 17565 times"> + </span>]:<span class="lineCov">      17565 :     Page        page = (Page) BufferGetPage(buffer);</span>
+<span class="lineNum">     687 </span>                :            :     OffsetNumber *offnum;
+<span class="lineNum">     688 </span>                :            :     int         i;
+<span class="lineNum">     689 </span>                :            : 
+<span class="lineNum">     690 </span>                :            :     /* Update all redirected line pointers */
+<span class="lineNum">     691 </span>                :<span class="lineCov">      17565 :     offnum = redirected;</span>
+<span class="lineNum">     692 </span>        [<span class="branchCov" title="Branch 0 was taken 11747 times"> + </span><span class="branchCov" title="Branch 1 was taken 17565 times"> + </span>]:<span class="lineCov">      29312 :     for (i = 0; i &lt; nredirected; i++)</span>
+<span class="lineNum">     693 </span>                :            :     {
+<span class="lineNum">     694 </span>                :<span class="lineCov">      11747 :         OffsetNumber fromoff = *offnum++;</span>
+<span class="lineNum">     695 </span>                :<span class="lineCov">      11747 :         OffsetNumber tooff = *offnum++;</span>
+<span class="lineNum">     696 </span>                :<span class="lineCov">      11747 :         ItemId      fromlp = PageGetItemId(page, fromoff);</span>
+<span class="lineNum">     697 </span>                :            : 
+<span class="lineNum">     698 </span>                :<span class="lineCov">      11747 :         ItemIdSetRedirect(fromlp, tooff);</span>
+<span class="lineNum">     699 </span>                :            :     }
+<span class="lineNum">     700 </span>                :            : 
+<span class="lineNum">     701 </span>                :            :     /* Update all now-dead line pointers */
+<span class="lineNum">     702 </span>                :<span class="lineCov">      17565 :     offnum = nowdead;</span>
+<span class="lineNum">     703 </span>        [<span class="branchCov" title="Branch 0 was taken 85342 times"> + </span><span class="branchCov" title="Branch 1 was taken 17565 times"> + </span>]:<span class="lineCov">     102907 :     for (i = 0; i &lt; ndead; i++)</span>
+<span class="lineNum">     704 </span>                :            :     {
+<span class="lineNum">     705 </span>                :<span class="lineCov">      85342 :         OffsetNumber off = *offnum++;</span>
+<span class="lineNum">     706 </span>                :<span class="lineCov">      85342 :         ItemId      lp = PageGetItemId(page, off);</span>
+<span class="lineNum">     707 </span>                :            : 
+<span class="lineNum">     708 </span>                :<span class="lineCov">      85342 :         ItemIdSetDead(lp);</span>
+<span class="lineNum">     709 </span>                :            :     }
+<span class="lineNum">     710 </span>                :            : 
+<span class="lineNum">     711 </span>                :            :     /* Update all now-unused line pointers */
+<span class="lineNum">     712 </span>                :<span class="lineCov">      17565 :     offnum = nowunused;</span>
+<span class="lineNum">     713 </span>        [<span class="branchCov" title="Branch 0 was taken 28182 times"> + </span><span class="branchCov" title="Branch 1 was taken 17565 times"> + </span>]:<span class="lineCov">      45747 :     for (i = 0; i &lt; nunused; i++)</span>
+<span class="lineNum">     714 </span>                :            :     {
+<span class="lineNum">     715 </span>                :<span class="lineCov">      28182 :         OffsetNumber off = *offnum++;</span>
+<span class="lineNum">     716 </span>                :<span class="lineCov">      28182 :         ItemId      lp = PageGetItemId(page, off);</span>
+<span class="lineNum">     717 </span>                :            : 
+<span class="lineNum">     718 </span>                :<span class="lineCov">      28182 :         ItemIdSetUnused(lp);</span>
+<span class="lineNum">     719 </span>                :            :     }
+<span class="lineNum">     720 </span>                :            : 
+<span class="lineNum">     721 </span>                :            :     /*
+<span class="lineNum">     722 </span>                :            :      * Finally, repair any fragmentation, and update the page's hint bit about
+<span class="lineNum">     723 </span>                :            :      * whether it has free pointers.
+<span class="lineNum">     724 </span>                :            :      */
+<span class="lineNum">     725 </span>                :<span class="lineCov">      17565 :     PageRepairFragmentation(page);</span>
+<span class="lineNum">     726 </span>                :<span class="lineCov">      17565 : }</span>
+<span class="lineNum">     727 </span>                :            : 
+<span class="lineNum">     728 </span>                :            : 
+<span class="lineNum">     729 </span>                :            : /*
+<span class="lineNum">     730 </span>                :            :  * For all items in this page, find their respective root line pointers.
+<span class="lineNum">     731 </span>                :            :  * If item k is part of a HOT-chain with root at item j, then we set
+<span class="lineNum">     732 </span>                :            :  * root_offsets[k - 1] = j.
+<span class="lineNum">     733 </span>                :            :  *
+<span class="lineNum">     734 </span>                :            :  * The passed-in root_offsets array must have MaxHeapTuplesPerPage entries.
+<span class="lineNum">     735 </span>                :            :  * Unused entries are filled with InvalidOffsetNumber (zero).
+<span class="lineNum">     736 </span>                :            :  *
+<span class="lineNum">     737 </span>                :            :  * The function must be called with at least share lock on the buffer, to
+<span class="lineNum">     738 </span>                :            :  * prevent concurrent prune operations.
+<span class="lineNum">     739 </span>                :            :  *
+<span class="lineNum">     740 </span>                :            :  * Note: The information collected here is valid only as long as the caller
+<span class="lineNum">     741 </span>                :            :  * holds a pin on the buffer. Once pin is released, a tuple might be pruned
+<span class="lineNum">     742 </span>                :            :  * and reused by a completely unrelated tuple.
+<a name="743"><span class="lineNum">     743 </span>                :            :  */</a>
+<span class="lineNum">     744 </span>                :            : void
+<span class="lineNum">     745 </span>                :<span class="lineNoCov">          0 : heap_get_root_tuples(Page page, OffsetNumber *root_offsets)</span>
+<span class="lineNum">     746 </span>                :            : {
+<span class="lineNum">     747 </span>                :            :     OffsetNumber offnum,
+<span class="lineNum">     748 </span>                :            :                 maxoff;
+<span class="lineNum">     749 </span>                :            : 
+<span class="lineNum">     750 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :     MemSet(root_offsets, InvalidOffsetNumber,</span>
+<span class="lineNum">         </span>[<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>][<span class="branchNoExec" title="Branch 6 was not executed"> # </span><span class="branchNoExec" title="Branch 7 was not executed"> # </span>]
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 8 was not executed"> # </span><span class="branchNoExec" title="Branch 9 was not executed"> # </span>]
+<span class="lineNum">     751 </span>                :            :            MaxHeapTuplesPerPage * sizeof(OffsetNumber));
+<span class="lineNum">     752 </span>                :            : 
+<span class="lineNum">     753 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     maxoff = PageGetMaxOffsetNumber(page);</span>
+<span class="lineNum">     754 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     for (offnum = FirstOffsetNumber; offnum &lt;= maxoff; offnum = OffsetNumberNext(offnum))</span>
+<span class="lineNum">     755 </span>                :            :     {
+<span class="lineNum">     756 </span>                :<span class="lineNoCov">          0 :         ItemId      lp = PageGetItemId(page, offnum);</span>
+<span class="lineNum">     757 </span>                :            :         HeapTupleHeader htup;
+<span class="lineNum">     758 </span>                :            :         OffsetNumber nextoffnum;
+<span class="lineNum">     759 </span>                :            :         TransactionId priorXmax;
+<span class="lineNum">     760 </span>                :            : 
+<span class="lineNum">     761 </span>                :            :         /* skip unused and dead items */
+<span class="lineNum">     762 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (!ItemIdIsUsed(lp) || ItemIdIsDead(lp))</span>
+<span class="lineNum">     763 </span>                :<span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     764 </span>                :            : 
+<span class="lineNum">     765 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (ItemIdIsNormal(lp))</span>
+<span class="lineNum">     766 </span>                :            :         {
+<span class="lineNum">     767 </span>                :<span class="lineNoCov">          0 :             htup = (HeapTupleHeader) PageGetItem(page, lp);</span>
+<span class="lineNum">     768 </span>                :            : 
+<span class="lineNum">     769 </span>                :            :             /*
+<span class="lineNum">     770 </span>                :            :              * Check if this tuple is part of a HOT-chain rooted at some other
+<span class="lineNum">     771 </span>                :            :              * tuple. If so, skip it for now; we'll process it when we find
+<span class="lineNum">     772 </span>                :            :              * its root.
+<span class="lineNum">     773 </span>                :            :              */
+<span class="lineNum">     774 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (HeapTupleHeaderIsHeapOnly(htup))</span>
+<span class="lineNum">     775 </span>                :<span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     776 </span>                :            : 
+<span class="lineNum">     777 </span>                :            :             /*
+<span class="lineNum">     778 </span>                :            :              * This is either a plain tuple or the root of a HOT-chain.
+<span class="lineNum">     779 </span>                :            :              * Remember it in the mapping.
+<span class="lineNum">     780 </span>                :            :              */
+<span class="lineNum">     781 </span>                :<span class="lineNoCov">          0 :             root_offsets[offnum - 1] = offnum;</span>
+<span class="lineNum">     782 </span>                :            : 
+<span class="lineNum">     783 </span>                :            :             /* If it's not the start of a HOT-chain, we're done with it */
+<span class="lineNum">     784 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (!HeapTupleHeaderIsHotUpdated(htup))</span>
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>]
+<span class="lineNum">     785 </span>                :<span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     786 </span>                :            : 
+<span class="lineNum">     787 </span>                :            :             /* Set up to scan the HOT-chain */
+<span class="lineNum">     788 </span>                :<span class="lineNoCov">          0 :             nextoffnum = ItemPointerGetOffsetNumber(&amp;htup-&gt;t_ctid);</span>
+<span class="lineNum">     789 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :             priorXmax = HeapTupleHeaderGetUpdateXid(htup);</span>
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>]
+<span class="lineNum">     790 </span>                :            :         }
+<span class="lineNum">     791 </span>                :            :         else
+<span class="lineNum">     792 </span>                :            :         {
+<span class="lineNum">     793 </span>                :            :             /* Must be a redirect item. We do not set its root_offsets entry */
+<span class="lineNum">     794 </span>                :            :             Assert(ItemIdIsRedirected(lp));
+<span class="lineNum">     795 </span>                :            :             /* Set up to scan the HOT-chain */
+<span class="lineNum">     796 </span>                :<span class="lineNoCov">          0 :             nextoffnum = ItemIdGetRedirect(lp);</span>
+<span class="lineNum">     797 </span>                :<span class="lineNoCov">          0 :             priorXmax = InvalidTransactionId;</span>
+<span class="lineNum">     798 </span>                :            :         }
+<span class="lineNum">     799 </span>                :            : 
+<span class="lineNum">     800 </span>                :            :         /*
+<span class="lineNum">     801 </span>                :            :          * Now follow the HOT-chain and collect other tuples in the chain.
+<span class="lineNum">     802 </span>                :            :          *
+<span class="lineNum">     803 </span>                :            :          * Note: Even though this is a nested loop, the complexity of the
+<span class="lineNum">     804 </span>                :            :          * function is O(N) because a tuple in the page should be visited not
+<span class="lineNum">     805 </span>                :            :          * more than twice, once in the outer loop and once in HOT-chain
+<span class="lineNum">     806 </span>                :            :          * chases.
+<span class="lineNum">     807 </span>                :            :          */
+<span class="lineNum">     808 </span>                :            :         for (;;)
+<span class="lineNum">     809 </span>                :            :         {
+<span class="lineNum">     810 </span>                :<span class="lineNoCov">          0 :             lp = PageGetItemId(page, nextoffnum);</span>
+<span class="lineNum">     811 </span>                :            : 
+<span class="lineNum">     812 </span>                :            :             /* Check for broken chains */
+<span class="lineNum">     813 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (!ItemIdIsNormal(lp))</span>
+<span class="lineNum">     814 </span>                :<span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     815 </span>                :            : 
+<span class="lineNum">     816 </span>                :<span class="lineNoCov">          0 :             htup = (HeapTupleHeader) PageGetItem(page, lp);</span>
+<span class="lineNum">     817 </span>                :            : 
+<span class="lineNum">     818 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (TransactionIdIsValid(priorXmax) &amp;&amp;</span>
+<span class="lineNum">     819 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :                 !TransactionIdEquals(priorXmax, HeapTupleHeaderGetXmin(htup)))</span>
+<span class="lineNum">     820 </span>                :<span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     821 </span>                :            : 
+<span class="lineNum">     822 </span>                :            :             /* Remember the root line pointer for this item */
+<span class="lineNum">     823 </span>                :<span class="lineNoCov">          0 :             root_offsets[nextoffnum - 1] = offnum;</span>
+<span class="lineNum">     824 </span>                :            : 
+<span class="lineNum">     825 </span>                :            :             /* Advance to next chain member, if any */
+<span class="lineNum">     826 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (!HeapTupleHeaderIsHotUpdated(htup))</span>
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>]
+<span class="lineNum">     827 </span>                :            :                 break;
+<span class="lineNum">     828 </span>                :            : 
+<span class="lineNum">     829 </span>                :            :             /* HOT implies it can't have moved to different partition */
+<span class="lineNum">     830 </span>                :            :             Assert(!HeapTupleHeaderIndicatesMovedPartitions(htup));
+<span class="lineNum">     831 </span>                :            : 
+<span class="lineNum">     832 </span>                :<span class="lineNoCov">          0 :             nextoffnum = ItemPointerGetOffsetNumber(&amp;htup-&gt;t_ctid);</span>
+<span class="lineNum">     833 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :             priorXmax = HeapTupleHeaderGetUpdateXid(htup);</span>
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>]
+<span class="lineNum">     834 </span>                :<span class="lineNoCov">          0 :         }</span>
+<span class="lineNum">     835 </span>                :            :     }
+<span class="lineNum">     836 </span>                :<span class="lineNoCov">          0 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

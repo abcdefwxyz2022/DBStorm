@@ -1,0 +1,415 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/storage/lmgr/condition_variable.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/storage/lmgr</a> - condition_variable.c<span style="font-size: 80%;"> (source / <a href="condition_variable.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">53</td>
+            <td class="headerCovTableEntry">76</td>
+            <td class="headerCovTableEntryLo">69.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:33:24</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">5</td>
+            <td class="headerCovTableEntry">6</td>
+            <td class="headerCovTableEntryMed">83.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">21</td>
+            <td class="headerCovTableEntry">48</td>
+            <td class="headerCovTableEntryLo">43.8 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">           Branch data     Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>                :            : /*-------------------------------------------------------------------------</a>
+<span class="lineNum">       2 </span>                :            :  *
+<span class="lineNum">       3 </span>                :            :  * condition_variable.c
+<span class="lineNum">       4 </span>                :            :  *    Implementation of condition variables.  Condition variables provide
+<span class="lineNum">       5 </span>                :            :  *    a way for one process to wait until a specific condition occurs,
+<span class="lineNum">       6 </span>                :            :  *    without needing to know the specific identity of the process for
+<span class="lineNum">       7 </span>                :            :  *    which they are waiting.  Waits for condition variables can be
+<span class="lineNum">       8 </span>                :            :  *    interrupted, unlike LWLock waits.  Condition variables are safe
+<span class="lineNum">       9 </span>                :            :  *    to use within dynamic shared memory segments.
+<span class="lineNum">      10 </span>                :            :  *
+<span class="lineNum">      11 </span>                :            :  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+<span class="lineNum">      12 </span>                :            :  * Portions Copyright (c) 1994, Regents of the University of California
+<span class="lineNum">      13 </span>                :            :  *
+<span class="lineNum">      14 </span>                :            :  * src/backend/storage/lmgr/condition_variable.c
+<span class="lineNum">      15 </span>                :            :  *
+<span class="lineNum">      16 </span>                :            :  *-------------------------------------------------------------------------
+<span class="lineNum">      17 </span>                :            :  */
+<span class="lineNum">      18 </span>                :            : 
+<span class="lineNum">      19 </span>                :            : #include &quot;postgres.h&quot;
+<span class="lineNum">      20 </span>                :            : 
+<span class="lineNum">      21 </span>                :            : #include &quot;miscadmin.h&quot;
+<span class="lineNum">      22 </span>                :            : #include &quot;storage/condition_variable.h&quot;
+<span class="lineNum">      23 </span>                :            : #include &quot;storage/ipc.h&quot;
+<span class="lineNum">      24 </span>                :            : #include &quot;storage/proc.h&quot;
+<span class="lineNum">      25 </span>                :            : #include &quot;storage/proclist.h&quot;
+<span class="lineNum">      26 </span>                :            : #include &quot;storage/spin.h&quot;
+<span class="lineNum">      27 </span>                :            : #include &quot;utils/memutils.h&quot;
+<span class="lineNum">      28 </span>                :            : 
+<span class="lineNum">      29 </span>                :            : /* Initially, we are not prepared to sleep on any condition variable. */
+<span class="lineNum">      30 </span>                :            : static ConditionVariable *cv_sleep_target = NULL;
+<span class="lineNum">      31 </span>                :            : 
+<span class="lineNum">      32 </span>                :            : /* Reusable WaitEventSet. */
+<span class="lineNum">      33 </span>                :            : static WaitEventSet *cv_wait_event_set = NULL;
+<span class="lineNum">      34 </span>                :            : 
+<span class="lineNum">      35 </span>                :            : /*
+<span class="lineNum">      36 </span>                :            :  * Initialize a condition variable.
+<a name="37"><span class="lineNum">      37 </span>                :            :  */</a>
+<span class="lineNum">      38 </span>                :            : void
+<span class="lineNum">      39 </span>                :<span class="lineCov">      41646 : ConditionVariableInit(ConditionVariable *cv)</span>
+<span class="lineNum">      40 </span>                :            : {
+<span class="lineNum">      41 </span>                :<span class="lineCov">      41646 :     SpinLockInit(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">      42 </span>                :<span class="lineCov">      41646 :     proclist_init(&amp;cv-&gt;wakeup);</span>
+<span class="lineNum">      43 </span>                :<span class="lineCov">      41646 : }</span>
+<span class="lineNum">      44 </span>                :            : 
+<span class="lineNum">      45 </span>                :            : /*
+<span class="lineNum">      46 </span>                :            :  * Prepare to wait on a given condition variable.
+<span class="lineNum">      47 </span>                :            :  *
+<span class="lineNum">      48 </span>                :            :  * This can optionally be called before entering a test/sleep loop.
+<span class="lineNum">      49 </span>                :            :  * Doing so is more efficient if we'll need to sleep at least once.
+<span class="lineNum">      50 </span>                :            :  * However, if the first test of the exit condition is likely to succeed,
+<span class="lineNum">      51 </span>                :            :  * it's more efficient to omit the ConditionVariablePrepareToSleep call.
+<span class="lineNum">      52 </span>                :            :  * See comments in ConditionVariableSleep for more detail.
+<span class="lineNum">      53 </span>                :            :  *
+<span class="lineNum">      54 </span>                :            :  * Caution: &quot;before entering the loop&quot; means you *must* test the exit
+<span class="lineNum">      55 </span>                :            :  * condition between calling ConditionVariablePrepareToSleep and calling
+<span class="lineNum">      56 </span>                :            :  * ConditionVariableSleep.  If that is inconvenient, omit calling
+<span class="lineNum">      57 </span>                :            :  * ConditionVariablePrepareToSleep.
+<a name="58"><span class="lineNum">      58 </span>                :            :  */</a>
+<span class="lineNum">      59 </span>                :            : void
+<span class="lineNum">      60 </span>                :<span class="lineCov">        120 : ConditionVariablePrepareToSleep(ConditionVariable *cv)</span>
+<span class="lineNum">      61 </span>                :            : {
+<span class="lineNum">      62 </span>                :<span class="lineCov">        120 :     int         pgprocno = MyProc-&gt;pgprocno;</span>
+<span class="lineNum">      63 </span>                :            : 
+<span class="lineNum">      64 </span>                :            :     /*
+<span class="lineNum">      65 </span>                :            :      * If first time through in this process, create a WaitEventSet, which
+<span class="lineNum">      66 </span>                :            :      * we'll reuse for all condition variable sleeps.
+<span class="lineNum">      67 </span>                :            :      */
+<span class="lineNum">      68 </span>        [<span class="branchCov" title="Branch 0 was taken 20 times"> + </span><span class="branchCov" title="Branch 1 was taken 100 times"> + </span>]:<span class="lineCov">        120 :     if (cv_wait_event_set == NULL)</span>
+<span class="lineNum">      69 </span>                :            :     {
+<span class="lineNum">      70 </span>                :            :         WaitEventSet *new_event_set;
+<span class="lineNum">      71 </span>                :            : 
+<span class="lineNum">      72 </span>                :<span class="lineCov">         20 :         new_event_set = CreateWaitEventSet(TopMemoryContext, 2);</span>
+<span class="lineNum">      73 </span>                :<span class="lineCov">         20 :         AddWaitEventToSet(new_event_set, WL_LATCH_SET, PGINVALID_SOCKET,</span>
+<span class="lineNum">      74 </span>                :            :                           MyLatch, NULL);
+<span class="lineNum">      75 </span>                :<span class="lineCov">         20 :         AddWaitEventToSet(new_event_set, WL_EXIT_ON_PM_DEATH, PGINVALID_SOCKET,</span>
+<span class="lineNum">      76 </span>                :            :                           NULL, NULL);
+<span class="lineNum">      77 </span>                :            :         /* Don't set cv_wait_event_set until we have a correct WES. */
+<span class="lineNum">      78 </span>                :<span class="lineCov">         20 :         cv_wait_event_set = new_event_set;</span>
+<span class="lineNum">      79 </span>                :            :     }
+<span class="lineNum">      80 </span>                :            : 
+<span class="lineNum">      81 </span>                :            :     /*
+<span class="lineNum">      82 </span>                :            :      * If some other sleep is already prepared, cancel it; this is necessary
+<span class="lineNum">      83 </span>                :            :      * because we have just one static variable tracking the prepared sleep,
+<span class="lineNum">      84 </span>                :            :      * and also only one cvWaitLink in our PGPROC.  It's okay to do this
+<span class="lineNum">      85 </span>                :            :      * because whenever control does return to the other test-and-sleep loop,
+<span class="lineNum">      86 </span>                :            :      * its ConditionVariableSleep call will just re-establish that sleep as
+<span class="lineNum">      87 </span>                :            :      * the prepared one.
+<span class="lineNum">      88 </span>                :            :      */
+<span class="lineNum">      89 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 120 times"> + </span>]:<span class="lineCov">        120 :     if (cv_sleep_target != NULL)</span>
+<span class="lineNum">      90 </span>                :<span class="lineNoCov">          0 :         ConditionVariableCancelSleep();</span>
+<span class="lineNum">      91 </span>                :            : 
+<span class="lineNum">      92 </span>                :            :     /* Record the condition variable on which we will sleep. */
+<span class="lineNum">      93 </span>                :<span class="lineCov">        120 :     cv_sleep_target = cv;</span>
+<span class="lineNum">      94 </span>                :            : 
+<span class="lineNum">      95 </span>                :            :     /*
+<span class="lineNum">      96 </span>                :            :      * Reset my latch before adding myself to the queue, to ensure that we
+<span class="lineNum">      97 </span>                :            :      * don't miss a wakeup that occurs immediately.
+<span class="lineNum">      98 </span>                :            :      */
+<span class="lineNum">      99 </span>                :<span class="lineCov">        120 :     ResetLatch(MyLatch);</span>
+<span class="lineNum">     100 </span>                :            : 
+<span class="lineNum">     101 </span>                :            :     /* Add myself to the wait queue. */
+<span class="lineNum">     102 </span>        [<span class="branchNoCov" title="Branch 1 was not taken"> - </span><span class="branchCov" title="Branch 2 was taken 120 times"> + </span>]:<span class="lineCov">        120 :     SpinLockAcquire(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     103 </span>                :<span class="lineCov">        120 :     proclist_push_tail(&amp;cv-&gt;wakeup, pgprocno, cvWaitLink);</span>
+<span class="lineNum">     104 </span>                :<span class="lineCov">        120 :     SpinLockRelease(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     105 </span>                :<span class="lineCov">        120 : }</span>
+<span class="lineNum">     106 </span>                :            : 
+<span class="lineNum">     107 </span>                :            : /*
+<span class="lineNum">     108 </span>                :            :  * Wait for the given condition variable to be signaled.
+<span class="lineNum">     109 </span>                :            :  *
+<span class="lineNum">     110 </span>                :            :  * This should be called in a predicate loop that tests for a specific exit
+<span class="lineNum">     111 </span>                :            :  * condition and otherwise sleeps, like so:
+<span class="lineNum">     112 </span>                :            :  *
+<span class="lineNum">     113 </span>                :            :  *   ConditionVariablePrepareToSleep(cv);  // optional
+<span class="lineNum">     114 </span>                :            :  *   while (condition for which we are waiting is not true)
+<span class="lineNum">     115 </span>                :            :  *       ConditionVariableSleep(cv, wait_event_info);
+<span class="lineNum">     116 </span>                :            :  *   ConditionVariableCancelSleep();
+<span class="lineNum">     117 </span>                :            :  *
+<span class="lineNum">     118 </span>                :            :  * wait_event_info should be a value from one of the WaitEventXXX enums
+<span class="lineNum">     119 </span>                :            :  * defined in pgstat.h.  This controls the contents of pg_stat_activity's
+<span class="lineNum">     120 </span>                :            :  * wait_event_type and wait_event columns while waiting.
+<a name="121"><span class="lineNum">     121 </span>                :            :  */</a>
+<span class="lineNum">     122 </span>                :            : void
+<span class="lineNum">     123 </span>                :<span class="lineCov">        116 : ConditionVariableSleep(ConditionVariable *cv, uint32 wait_event_info)</span>
+<span class="lineNum">     124 </span>                :            : {
+<span class="lineNum">     125 </span>                :            :     WaitEvent   event;
+<span class="lineNum">     126 </span>                :<span class="lineCov">        116 :     bool        done = false;</span>
+<span class="lineNum">     127 </span>                :            : 
+<span class="lineNum">     128 </span>                :            :     /*
+<span class="lineNum">     129 </span>                :            :      * If the caller didn't prepare to sleep explicitly, then do so now and
+<span class="lineNum">     130 </span>                :            :      * return immediately.  The caller's predicate loop should immediately
+<span class="lineNum">     131 </span>                :            :      * call again if its exit condition is not yet met.  This will result in
+<span class="lineNum">     132 </span>                :            :      * the exit condition being tested twice before we first sleep.  The extra
+<span class="lineNum">     133 </span>                :            :      * test can be prevented by calling ConditionVariablePrepareToSleep(cv)
+<span class="lineNum">     134 </span>                :            :      * first.  Whether it's worth doing that depends on whether you expect the
+<span class="lineNum">     135 </span>                :            :      * exit condition to be met initially, in which case skipping the prepare
+<span class="lineNum">     136 </span>                :            :      * is recommended because it avoids manipulations of the wait list, or not
+<span class="lineNum">     137 </span>                :            :      * met initially, in which case preparing first is better because it
+<span class="lineNum">     138 </span>                :            :      * avoids one extra test of the exit condition.
+<span class="lineNum">     139 </span>                :            :      *
+<span class="lineNum">     140 </span>                :            :      * If we are currently prepared to sleep on some other CV, we just cancel
+<span class="lineNum">     141 </span>                :            :      * that and prepare this one; see ConditionVariablePrepareToSleep.
+<span class="lineNum">     142 </span>                :            :      */
+<span class="lineNum">     143 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 116 times"> + </span>]:<span class="lineCov">        116 :     if (cv_sleep_target != cv)</span>
+<span class="lineNum">     144 </span>                :            :     {
+<span class="lineNum">     145 </span>                :<span class="lineNoCov">          0 :         ConditionVariablePrepareToSleep(cv);</span>
+<span class="lineNum">     146 </span>                :<span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     147 </span>                :            :     }
+<span class="lineNum">     148 </span>                :            : 
+<span class="lineNum">     149 </span>                :            :     do
+<span class="lineNum">     150 </span>                :            :     {
+<span class="lineNum">     151 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 116 times"> + </span>]:<span class="lineCov">        116 :         CHECK_FOR_INTERRUPTS();</span>
+<span class="lineNum">     152 </span>                :            : 
+<span class="lineNum">     153 </span>                :            :         /*
+<span class="lineNum">     154 </span>                :            :          * Wait for latch to be set.  (If we're awakened for some other
+<span class="lineNum">     155 </span>                :            :          * reason, the code below will cope anyway.)
+<span class="lineNum">     156 </span>                :            :          */
+<span class="lineNum">     157 </span>                :<span class="lineCov">        116 :         (void) WaitEventSetWait(cv_wait_event_set, -1, &amp;event, 1,</span>
+<span class="lineNum">     158 </span>                :            :                                 wait_event_info);
+<span class="lineNum">     159 </span>                :            : 
+<span class="lineNum">     160 </span>                :            :         /* Reset latch before examining the state of the wait list. */
+<span class="lineNum">     161 </span>                :<span class="lineCov">        116 :         ResetLatch(MyLatch);</span>
+<span class="lineNum">     162 </span>                :            : 
+<span class="lineNum">     163 </span>                :            :         /*
+<span class="lineNum">     164 </span>                :            :          * If this process has been taken out of the wait list, then we know
+<span class="lineNum">     165 </span>                :            :          * that it has been signaled by ConditionVariableSignal (or
+<span class="lineNum">     166 </span>                :            :          * ConditionVariableBroadcast), so we should return to the caller. But
+<span class="lineNum">     167 </span>                :            :          * that doesn't guarantee that the exit condition is met, only that we
+<span class="lineNum">     168 </span>                :            :          * ought to check it.  So we must put the process back into the wait
+<span class="lineNum">     169 </span>                :            :          * list, to ensure we don't miss any additional wakeup occurring while
+<span class="lineNum">     170 </span>                :            :          * the caller checks its exit condition.  We can take ourselves out of
+<span class="lineNum">     171 </span>                :            :          * the wait list only when the caller calls
+<span class="lineNum">     172 </span>                :            :          * ConditionVariableCancelSleep.
+<span class="lineNum">     173 </span>                :            :          *
+<span class="lineNum">     174 </span>                :            :          * If we're still in the wait list, then the latch must have been set
+<span class="lineNum">     175 </span>                :            :          * by something other than ConditionVariableSignal; though we don't
+<span class="lineNum">     176 </span>                :            :          * guarantee not to return spuriously, we'll avoid this obvious case.
+<span class="lineNum">     177 </span>                :            :          */
+<span class="lineNum">     178 </span>        [<span class="branchNoCov" title="Branch 1 was not taken"> - </span><span class="branchCov" title="Branch 2 was taken 116 times"> + </span>]:<span class="lineCov">        116 :         SpinLockAcquire(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     179 </span>        [<span class="branchCov" title="Branch 1 was taken 116 times"> + </span><span class="branchNoCov" title="Branch 2 was not taken"> - </span>]:<span class="lineCov">        116 :         if (!proclist_contains(&amp;cv-&gt;wakeup, MyProc-&gt;pgprocno, cvWaitLink))</span>
+<span class="lineNum">     180 </span>                :            :         {
+<span class="lineNum">     181 </span>                :<span class="lineCov">        116 :             done = true;</span>
+<span class="lineNum">     182 </span>                :<span class="lineCov">        116 :             proclist_push_tail(&amp;cv-&gt;wakeup, MyProc-&gt;pgprocno, cvWaitLink);</span>
+<span class="lineNum">     183 </span>                :            :         }
+<span class="lineNum">     184 </span>                :<span class="lineCov">        116 :         SpinLockRelease(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     185 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 116 times"> + </span>]:<span class="lineCov">        116 :     } while (!done);</span>
+<span class="lineNum">     186 </span>                :            : }
+<span class="lineNum">     187 </span>                :            : 
+<span class="lineNum">     188 </span>                :            : /*
+<span class="lineNum">     189 </span>                :            :  * Cancel any pending sleep operation.
+<span class="lineNum">     190 </span>                :            :  *
+<span class="lineNum">     191 </span>                :            :  * We just need to remove ourselves from the wait queue of any condition
+<span class="lineNum">     192 </span>                :            :  * variable for which we have previously prepared a sleep.
+<span class="lineNum">     193 </span>                :            :  *
+<span class="lineNum">     194 </span>                :            :  * Do nothing if nothing is pending; this allows this function to be called
+<span class="lineNum">     195 </span>                :            :  * during transaction abort to clean up any unfinished CV sleep.
+<a name="196"><span class="lineNum">     196 </span>                :            :  */</a>
+<span class="lineNum">     197 </span>                :            : void
+<span class="lineNum">     198 </span>                :<span class="lineCov">      15685 : ConditionVariableCancelSleep(void)</span>
+<span class="lineNum">     199 </span>                :            : {
+<span class="lineNum">     200 </span>                :<span class="lineCov">      15685 :     ConditionVariable *cv = cv_sleep_target;</span>
+<span class="lineNum">     201 </span>                :            : 
+<span class="lineNum">     202 </span>        [<span class="branchCov" title="Branch 0 was taken 15565 times"> + </span><span class="branchCov" title="Branch 1 was taken 120 times"> + </span>]:<span class="lineCov">      15685 :     if (cv == NULL)</span>
+<span class="lineNum">     203 </span>                :<span class="lineCov">      15565 :         return;</span>
+<span class="lineNum">     204 </span>                :            : 
+<span class="lineNum">     205 </span>        [<span class="branchNoCov" title="Branch 1 was not taken"> - </span><span class="branchCov" title="Branch 2 was taken 120 times"> + </span>]:<span class="lineCov">        120 :     SpinLockAcquire(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     206 </span>        [<span class="branchCov" title="Branch 1 was taken 120 times"> + </span><span class="branchNoCov" title="Branch 2 was not taken"> - </span>]:<span class="lineCov">        120 :     if (proclist_contains(&amp;cv-&gt;wakeup, MyProc-&gt;pgprocno, cvWaitLink))</span>
+<span class="lineNum">     207 </span>                :<span class="lineCov">        120 :         proclist_delete(&amp;cv-&gt;wakeup, MyProc-&gt;pgprocno, cvWaitLink);</span>
+<span class="lineNum">     208 </span>                :<span class="lineCov">        120 :     SpinLockRelease(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     209 </span>                :            : 
+<span class="lineNum">     210 </span>                :<span class="lineCov">        120 :     cv_sleep_target = NULL;</span>
+<span class="lineNum">     211 </span>                :            : }
+<span class="lineNum">     212 </span>                :            : 
+<span class="lineNum">     213 </span>                :            : /*
+<span class="lineNum">     214 </span>                :            :  * Wake up the oldest process sleeping on the CV, if there is any.
+<span class="lineNum">     215 </span>                :            :  *
+<span class="lineNum">     216 </span>                :            :  * Note: it's difficult to tell whether this has any real effect: we know
+<span class="lineNum">     217 </span>                :            :  * whether we took an entry off the list, but the entry might only be a
+<span class="lineNum">     218 </span>                :            :  * sentinel.  Hence, think twice before proposing that this should return
+<span class="lineNum">     219 </span>                :            :  * a flag telling whether it woke somebody.
+<a name="220"><span class="lineNum">     220 </span>                :            :  */</a>
+<span class="lineNum">     221 </span>                :            : void
+<span class="lineNum">     222 </span>                :<span class="lineNoCov">          0 : ConditionVariableSignal(ConditionVariable *cv)</span>
+<span class="lineNum">     223 </span>                :            : {
+<span class="lineNum">     224 </span>                :<span class="lineNoCov">          0 :     PGPROC     *proc = NULL;</span>
+<span class="lineNum">     225 </span>                :            : 
+<span class="lineNum">     226 </span>                :            :     /* Remove the first process from the wakeup queue (if any). */
+<span class="lineNum">     227 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     SpinLockAcquire(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     228 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!proclist_is_empty(&amp;cv-&gt;wakeup))</span>
+<span class="lineNum">     229 </span>                :<span class="lineNoCov">          0 :         proc = proclist_pop_head_node(&amp;cv-&gt;wakeup, cvWaitLink);</span>
+<span class="lineNum">     230 </span>                :<span class="lineNoCov">          0 :     SpinLockRelease(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     231 </span>                :            : 
+<span class="lineNum">     232 </span>                :            :     /* If we found someone sleeping, set their latch to wake them up. */
+<span class="lineNum">     233 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (proc != NULL)</span>
+<span class="lineNum">     234 </span>                :<span class="lineNoCov">          0 :         SetLatch(&amp;proc-&gt;procLatch);</span>
+<span class="lineNum">     235 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     236 </span>                :            : 
+<span class="lineNum">     237 </span>                :            : /*
+<span class="lineNum">     238 </span>                :            :  * Wake up all processes sleeping on the given CV.
+<span class="lineNum">     239 </span>                :            :  *
+<span class="lineNum">     240 </span>                :            :  * This guarantees to wake all processes that were sleeping on the CV
+<span class="lineNum">     241 </span>                :            :  * at time of call, but processes that add themselves to the list mid-call
+<span class="lineNum">     242 </span>                :            :  * will typically not get awakened.
+<a name="243"><span class="lineNum">     243 </span>                :            :  */</a>
+<span class="lineNum">     244 </span>                :            : void
+<span class="lineNum">     245 </span>                :<span class="lineCov">        120 : ConditionVariableBroadcast(ConditionVariable *cv)</span>
+<span class="lineNum">     246 </span>                :            : {
+<span class="lineNum">     247 </span>                :<span class="lineCov">        120 :     int         pgprocno = MyProc-&gt;pgprocno;</span>
+<span class="lineNum">     248 </span>                :<span class="lineCov">        120 :     PGPROC     *proc = NULL;</span>
+<span class="lineNum">     249 </span>                :<span class="lineCov">        120 :     bool        have_sentinel = false;</span>
+<span class="lineNum">     250 </span>                :            : 
+<span class="lineNum">     251 </span>                :            :     /*
+<span class="lineNum">     252 </span>                :            :      * In some use-cases, it is common for awakened processes to immediately
+<span class="lineNum">     253 </span>                :            :      * re-queue themselves.  If we just naively try to reduce the wakeup list
+<span class="lineNum">     254 </span>                :            :      * to empty, we'll get into a potentially-indefinite loop against such a
+<span class="lineNum">     255 </span>                :            :      * process.  The semantics we really want are just to be sure that we have
+<span class="lineNum">     256 </span>                :            :      * wakened all processes that were in the list at entry.  We can use our
+<span class="lineNum">     257 </span>                :            :      * own cvWaitLink as a sentinel to detect when we've finished.
+<span class="lineNum">     258 </span>                :            :      *
+<span class="lineNum">     259 </span>                :            :      * A seeming flaw in this approach is that someone else might signal the
+<span class="lineNum">     260 </span>                :            :      * CV and in doing so remove our sentinel entry.  But that's fine: since
+<span class="lineNum">     261 </span>                :            :      * CV waiters are always added and removed in order, that must mean that
+<span class="lineNum">     262 </span>                :            :      * every previous waiter has been wakened, so we're done.  We'll get an
+<span class="lineNum">     263 </span>                :            :      * extra &quot;set&quot; on our latch from the someone else's signal, which is
+<span class="lineNum">     264 </span>                :            :      * slightly inefficient but harmless.
+<span class="lineNum">     265 </span>                :            :      *
+<span class="lineNum">     266 </span>                :            :      * We can't insert our cvWaitLink as a sentinel if it's already in use in
+<span class="lineNum">     267 </span>                :            :      * some other proclist.  While that's not expected to be true for typical
+<span class="lineNum">     268 </span>                :            :      * uses of this function, we can deal with it by simply canceling any
+<span class="lineNum">     269 </span>                :            :      * prepared CV sleep.  The next call to ConditionVariableSleep will take
+<span class="lineNum">     270 </span>                :            :      * care of re-establishing the lost state.
+<span class="lineNum">     271 </span>                :            :      */
+<span class="lineNum">     272 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 120 times"> + </span>]:<span class="lineCov">        120 :     if (cv_sleep_target != NULL)</span>
+<span class="lineNum">     273 </span>                :<span class="lineNoCov">          0 :         ConditionVariableCancelSleep();</span>
+<span class="lineNum">     274 </span>                :            : 
+<span class="lineNum">     275 </span>                :            :     /*
+<span class="lineNum">     276 </span>                :            :      * Inspect the state of the queue.  If it's empty, we have nothing to do.
+<span class="lineNum">     277 </span>                :            :      * If there's exactly one entry, we need only remove and signal that
+<span class="lineNum">     278 </span>                :            :      * entry.  Otherwise, remove the first entry and insert our sentinel.
+<span class="lineNum">     279 </span>                :            :      */
+<span class="lineNum">     280 </span>        [<span class="branchNoCov" title="Branch 1 was not taken"> - </span><span class="branchCov" title="Branch 2 was taken 120 times"> + </span>]:<span class="lineCov">        120 :     SpinLockAcquire(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     281 </span>                :            :     /* While we're here, let's assert we're not in the list. */
+<span class="lineNum">     282 </span>                :            :     Assert(!proclist_contains(&amp;cv-&gt;wakeup, pgprocno, cvWaitLink));
+<span class="lineNum">     283 </span>                :            : 
+<span class="lineNum">     284 </span>        [<span class="branchCov" title="Branch 1 was taken 116 times"> + </span><span class="branchCov" title="Branch 2 was taken 4 times"> + </span>]:<span class="lineCov">        120 :     if (!proclist_is_empty(&amp;cv-&gt;wakeup))</span>
+<span class="lineNum">     285 </span>                :            :     {
+<span class="lineNum">     286 </span>                :<span class="lineCov">        116 :         proc = proclist_pop_head_node(&amp;cv-&gt;wakeup, cvWaitLink);</span>
+<span class="lineNum">     287 </span>        [<span class="branchNoCov" title="Branch 1 was not taken"> - </span><span class="branchCov" title="Branch 2 was taken 116 times"> + </span>]:<span class="lineCov">        116 :         if (!proclist_is_empty(&amp;cv-&gt;wakeup))</span>
+<span class="lineNum">     288 </span>                :            :         {
+<span class="lineNum">     289 </span>                :<span class="lineNoCov">          0 :             proclist_push_tail(&amp;cv-&gt;wakeup, pgprocno, cvWaitLink);</span>
+<span class="lineNum">     290 </span>                :<span class="lineNoCov">          0 :             have_sentinel = true;</span>
+<span class="lineNum">     291 </span>                :            :         }
+<span class="lineNum">     292 </span>                :            :     }
+<span class="lineNum">     293 </span>                :<span class="lineCov">        120 :     SpinLockRelease(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     294 </span>                :            : 
+<span class="lineNum">     295 </span>                :            :     /* Awaken first waiter, if there was one. */
+<span class="lineNum">     296 </span>        [<span class="branchCov" title="Branch 0 was taken 116 times"> + </span><span class="branchCov" title="Branch 1 was taken 4 times"> + </span>]:<span class="lineCov">        120 :     if (proc != NULL)</span>
+<span class="lineNum">     297 </span>                :<span class="lineCov">        116 :         SetLatch(&amp;proc-&gt;procLatch);</span>
+<span class="lineNum">     298 </span>                :            : 
+<span class="lineNum">     299 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 120 times"> + </span>]:<span class="lineCov">        120 :     while (have_sentinel)</span>
+<span class="lineNum">     300 </span>                :            :     {
+<span class="lineNum">     301 </span>                :            :         /*
+<span class="lineNum">     302 </span>                :            :          * Each time through the loop, remove the first wakeup list entry, and
+<span class="lineNum">     303 </span>                :            :          * signal it unless it's our sentinel.  Repeat as long as the sentinel
+<span class="lineNum">     304 </span>                :            :          * remains in the list.
+<span class="lineNum">     305 </span>                :            :          *
+<span class="lineNum">     306 </span>                :            :          * Notice that if someone else removes our sentinel, we will waken one
+<span class="lineNum">     307 </span>                :            :          * additional process before exiting.  That's intentional, because if
+<span class="lineNum">     308 </span>                :            :          * someone else signals the CV, they may be intending to waken some
+<span class="lineNum">     309 </span>                :            :          * third process that added itself to the list after we added the
+<span class="lineNum">     310 </span>                :            :          * sentinel.  Better to give a spurious wakeup (which should be
+<span class="lineNum">     311 </span>                :            :          * harmless beyond wasting some cycles) than to lose a wakeup.
+<span class="lineNum">     312 </span>                :            :          */
+<span class="lineNum">     313 </span>                :<span class="lineNoCov">          0 :         proc = NULL;</span>
+<span class="lineNum">     314 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         SpinLockAcquire(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     315 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (!proclist_is_empty(&amp;cv-&gt;wakeup))</span>
+<span class="lineNum">     316 </span>                :<span class="lineNoCov">          0 :             proc = proclist_pop_head_node(&amp;cv-&gt;wakeup, cvWaitLink);</span>
+<span class="lineNum">     317 </span>                :<span class="lineNoCov">          0 :         have_sentinel = proclist_contains(&amp;cv-&gt;wakeup, pgprocno, cvWaitLink);</span>
+<span class="lineNum">     318 </span>                :<span class="lineNoCov">          0 :         SpinLockRelease(&amp;cv-&gt;mutex);</span>
+<span class="lineNum">     319 </span>                :            : 
+<span class="lineNum">     320 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (proc != NULL &amp;&amp; proc != MyProc)</span>
+<span class="lineNum">     321 </span>                :<span class="lineNoCov">          0 :             SetLatch(&amp;proc-&gt;procLatch);</span>
+<span class="lineNum">     322 </span>                :            :     }
+<span class="lineNum">     323 </span>                :<span class="lineCov">        120 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

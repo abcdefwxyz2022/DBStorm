@@ -1,0 +1,648 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/access/transam/xlog.c - functions</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/access/transam</a> - xlog.c<span style="font-size: 80%;"> (<a href="xlog.c.gcov.html">source</a> / functions)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">1708</td>
+            <td class="headerCovTableEntry">3320</td>
+            <td class="headerCovTableEntryLo">51.4 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:34:54</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">93</td>
+            <td class="headerCovTableEntry">140</td>
+            <td class="headerCovTableEntryLo">66.4 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">795</td>
+            <td class="headerCovTableEntry">2503</td>
+            <td class="headerCovTableEntryLo">31.8 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <center>
+  <table width="60%" cellpadding=1 cellspacing=1 border=0>
+    <tr><td><br></td></tr>
+    <tr>
+      <td width="80%" class="tableHead">Function Name <span class="tableHeadSort"><a href="xlog.c.func.html"><img src="../../../../updown.png" width=10 height=14 alt="Sort by function name" title="Sort by function name" border=0></a></span></td>
+      <td width="20%" class="tableHead">Hit count <span class="tableHeadSort"><img src="../../../../glass.png" width=10 height=14 alt="Sort by hit count" title="Sort by hit count" border=0></span></td>
+    </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11527">BackupInProgress</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5124">BootStrapXLOG</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#12264">CheckForStandbyTrigger</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8998">CreateEndOfRecoveryRecord</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#9117">CreateRestartPoint</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#6131">GetCurrentChunkReplayStartTime</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4875">GetFakeLSNForUnloggedRel</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8358">GetLastSegSwitchData</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#6101">GetLatestXTime</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4849">GetMockAuthenticationNonce</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11280">GetOldestRestartPoint</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#6147">GetXLogReceiptTime</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11231">GetXLogReplayRecPtr</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11266">GetXLogWriteRecPtr</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8035">HotStandbyActive</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8060">HotStandbyActiveInReplay</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8426">LogCheckpointStart</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5969">RecoveryIsPaused</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#9075">RecoveryRestartPoint</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3940">RemoveTempXlogFiles</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#6119">SetCurrentChunkStartTime</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#6090">SetLatestXTime</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5981">SetRecoveryPause</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#12352">WakeupRecovery</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4522">WriteControlFile</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4899">XLOGChooseNumBuffers</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#10205">XLogFileNameP</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3599">XLogFileOpen</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#12372">XLogRequestWalReceiverReply</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#9462">XLogRestorePoint</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2293">assign_checkpoint_completion_target</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#9616">checkTimeLineSwitch</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#1370">checkXLogConsistency</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11183">do_pg_abort_backup</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5603">getRecordTimestamp</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#10704">pg_start_backup_callback</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#10733">pg_stop_backup_callback</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11430">read_tablespace_map</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#6002">recoveryApplyDelay</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5951">recoveryPausesHere</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5787">recoveryStopsAfter</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5638">recoveryStopsBefore</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11215">register_persistent_abort_backup_handler</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4428">rescanLatestTimeLine</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11504">rm_redo_error_callback</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#10047">xlog_outdesc</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#9662">xlog_redo</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#7860">CheckRecoveryConsistency</a></td>
+              <td class="coverFnHi">1</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#6185">CheckRequiredParameterValues</a></td>
+              <td class="coverFnHi">1</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4037">RemoveNonParentXlogFiles</a></td>
+              <td class="coverFnHi">1</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2713">UpdateMinRecoveryPoint</a></td>
+              <td class="coverFnHi">1</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#1718">WALInsertLockUpdateInsertingAt</a></td>
+              <td class="coverFnHi">1</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3394">XLogFileCopy</a></td>
+              <td class="coverFnHi">1</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#12245">emode_for_corrupt_record</a></td>
+              <td class="coverFnHi">1</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5499">exitArchiveRecovery</a></td>
+              <td class="coverFnHi">1</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#9407">XLogPutNextOid</a></td>
+              <td class="coverFnHi">2</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11547">CancelBackup</a></td>
+              <td class="coverFnHi">3</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8121">ReadCheckpointRecord</a></td>
+              <td class="coverFnHi">3</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8375">ShutdownXLOG</a></td>
+              <td class="coverFnHi">3</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#6232">StartupXLOG</a></td>
+              <td class="coverFnHi">3</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4197">ValidateXLOGDirectoryStructure</a></td>
+              <td class="coverFnHi">3</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#9487">XLogReportParameters</a></td>
+              <td class="coverFnHi">3</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5334">readRecoverySignalFile</a></td>
+              <td class="coverFnHi">3</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11305">read_backup_label</a></td>
+              <td class="coverFnHi">3</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5315">str_time</a></td>
+              <td class="coverFnHi">3</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5416">validateRecoveryParameters</a></td>
+              <td class="coverFnHi">3</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11824">WaitForWALToBecomeAvailable</a></td>
+              <td class="coverFnHi">4</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3705">XLogFileReadAnyTLI</a></td>
+              <td class="coverFnHi">4</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11626">XLogPageRead</a></td>
+              <td class="coverFnHi">4</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#9550">UpdateFullPageWrites</a></td>
+              <td class="coverFnHi">6</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3622">XLogFileRead</a></td>
+              <td class="coverFnHi">6</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8105">LocalSetXLogInsertAllowed</a></td>
+              <td class="coverFnHi">7</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4273">ReadRecord</a></td>
+              <td class="coverFnHi">7</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4236">CleanupBackupHistory</a></td>
+              <td class="coverFnHi">15</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#10253">do_pg_start_backup</a></td>
+              <td class="coverFnHi">15</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#10772">do_pg_stop_backup</a></td>
+              <td class="coverFnHi">15</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#10751">get_backup_status</a></td>
+              <td class="coverFnHi">30</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#9444">RequestXLogSwitch</a></td>
+              <td class="coverFnHi">33</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#1305">ReserveXLogSwitch</a></td>
+              <td class="coverFnHi">33</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#12336">CheckPromoteSignal</a></td>
+              <td class="coverFnHi">36</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2044">XLogRecPtrToBytePos</a></td>
+              <td class="coverFnHi">39</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4839">GetSystemIdentifier</a></td>
+              <td class="coverFnHi">47</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#12361">SetWalWriterSleeping</a></td>
+              <td class="coverFnHi">128</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3920">UpdateLastRemovedPtr</a></td>
+              <td class="coverFnHi">192</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2304">XLOGfileslop</a></td>
+              <td class="coverFnHi">192</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2354">XLogCheckpointNeeded</a></td>
+              <td class="coverFnHi">194</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3840">PreallocXlogFiles</a></td>
+              <td class="coverFnHi">195</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#9047">CheckPointGuts</a></td>
+              <td class="coverFnHi">196</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8577">CreateCheckPoint</a></td>
+              <td class="coverFnHi">196</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#9367">KeepLogSeg</a></td>
+              <td class="coverFnHi">196</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8444">LogCheckpointEnd</a></td>
+              <td class="coverFnHi">196</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3970">RemoveOldXlogFiles</a></td>
+              <td class="coverFnHi">196</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8515">UpdateCheckPointDistanceEstimate</a></td>
+              <td class="coverFnHi">196</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2692">XLogGetReplicationSlotMinimumLSN</a></td>
+              <td class="coverFnHi">196</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4094">RemoveXlogFile</a></td>
+              <td class="coverFnHi">198</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4830">UpdateControlFile</a></td>
+              <td class="coverFnHi">205</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8014">GetRecoveryState</a></td>
+              <td class="coverFnHi">222</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3540">InstallXLogFileSegment</a></td>
+              <td class="coverFnHi">252</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#1663">WALInsertLockAcquireExclusive</a></td>
+              <td class="coverFnHi">305</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3904">XLogGetLastRemovedSegno</a></td>
+              <td class="coverFnHi">323</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8329">GetLastImportantRecPtr</a></td>
+              <td class="coverFnHi">629</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2679">XLogSetReplicationSlotMinimumLSN</a></td>
+              <td class="coverFnHi">874</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8226">InitXLOGAccess</a></td>
+              <td class="coverFnHi">2966</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8295">GetInsertRecPtr</a></td>
+              <td class="coverFnHi">3303</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8252">GetRedoRecPtr</a></td>
+              <td class="coverFnHi">3361</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3806">XLogFileClose</a></td>
+              <td class="coverFnHi">4682</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3207">XLogFileInit</a></td>
+              <td class="coverFnHi">7320</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#10071">get_sync_bit</a></td>
+              <td class="coverFnHi">7374</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4959">LocalProcessControlFile</a></td>
+              <td class="coverFnHi">19181</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4614">ReadControlFile</a></td>
+              <td class="coverFnHi">19181</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#12325">RemovePromoteSignalFiles</a></td>
+              <td class="coverFnHi">19181</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#5011">XLOGShmemInit</a></td>
+              <td class="coverFnHi">19181</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#10127">assign_xlog_sync_method</a></td>
+              <td class="coverFnHi">19181</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4970">XLOGShmemSize</a></td>
+              <td class="coverFnHi">38362</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4915">check_wal_buffers</a></td>
+              <td class="coverFnHi">38362</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2286">assign_max_wal_size</a></td>
+              <td class="coverFnHi">38434</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2088">AdvanceXLInsertBuffer</a></td>
+              <td class="coverFnHi">53880</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2257">CalculateCheckpointSegments</a></td>
+              <td class="coverFnHi">57615</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2989">XLogBackgroundFlush</a></td>
+              <td class="coverFnHi">78076</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2638">XLogSetAsyncXactLSN</a></td>
+              <td class="coverFnHi">242856</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#10160">issue_xlog_fsync</a></td>
+              <td class="coverFnHi">315285</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2378">XLogWrite</a></td>
+              <td class="coverFnHi">337929</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2800">XLogFlush</a></td>
+              <td class="coverFnHi">409509</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#1751">WaitXLogInsertionsToFinish</a></td>
+              <td class="coverFnHi">456108</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3873">CheckXLogRemoved</a></td>
+              <td class="coverFnHi">515745</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#3121">XLogNeedsFlush</a></td>
+              <td class="coverFnHi">633370</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8311">GetFlushRecPtr</a></td>
+              <td class="coverFnHi">1401343</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#11250">GetXLogInsertRecPtr</a></td>
+              <td class="coverFnHi">1545145</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#4859">DataChecksumsEnabled</a></td>
+              <td class="coverFnHi">3577505</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#1249">ReserveXLogInsertLocation</a></td>
+              <td class="coverFnHi">29666496</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#1474">CopyXLogRecordToWAL</a></td>
+              <td class="coverFnHi">29666529</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#1618">WALInsertLockAcquire</a></td>
+              <td class="coverFnHi">29666531</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#974">XLogInsertRecord</a></td>
+              <td class="coverFnHi">29666564</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#1692">WALInsertLockRelease</a></td>
+              <td class="coverFnHi">29666836</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8280">GetFullPageWriteInfo</a></td>
+              <td class="coverFnHi">29668211</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#1850">GetXLogBuffer</a></td>
+              <td class="coverFnHi">30028850</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#2001">XLogBytePosToEndRecPtr</a></td>
+              <td class="coverFnHi">30122670</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#8074">XLogInsertAllowed</a></td>
+              <td class="coverFnHi">59742602</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#1961">XLogBytePosToRecPtr</a></td>
+              <td class="coverFnHi">60878399</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="xlog.c.gcov.html#7961">RecoveryInProgress</a></td>
+              <td class="coverFnHi">82757970</td>
+            </tr>
+  </table>
+  <br>
+  </center>
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

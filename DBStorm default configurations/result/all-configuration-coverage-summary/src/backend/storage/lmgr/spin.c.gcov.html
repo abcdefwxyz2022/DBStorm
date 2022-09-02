@@ -1,0 +1,272 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/storage/lmgr/spin.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/storage/lmgr</a> - spin.c<span style="font-size: 80%;"> (source / <a href="spin.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">4</td>
+            <td class="headerCovTableEntry">4</td>
+            <td class="headerCovTableEntryHi">100.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:32:14</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">2</td>
+            <td class="headerCovTableEntry">2</td>
+            <td class="headerCovTableEntryHi">100.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntryHi">-</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">           Branch data     Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>                :            : /*-------------------------------------------------------------------------</a>
+<span class="lineNum">       2 </span>                :            :  *
+<span class="lineNum">       3 </span>                :            :  * spin.c
+<span class="lineNum">       4 </span>                :            :  *     Hardware-independent implementation of spinlocks.
+<span class="lineNum">       5 </span>                :            :  *
+<span class="lineNum">       6 </span>                :            :  *
+<span class="lineNum">       7 </span>                :            :  * For machines that have test-and-set (TAS) instructions, s_lock.h/.c
+<span class="lineNum">       8 </span>                :            :  * define the spinlock implementation.  This file contains only a stub
+<span class="lineNum">       9 </span>                :            :  * implementation for spinlocks using PGSemaphores.  Unless semaphores
+<span class="lineNum">      10 </span>                :            :  * are implemented in a way that doesn't involve a kernel call, this
+<span class="lineNum">      11 </span>                :            :  * is too slow to be very useful :-(
+<span class="lineNum">      12 </span>                :            :  *
+<span class="lineNum">      13 </span>                :            :  *
+<span class="lineNum">      14 </span>                :            :  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+<span class="lineNum">      15 </span>                :            :  * Portions Copyright (c) 1994, Regents of the University of California
+<span class="lineNum">      16 </span>                :            :  *
+<span class="lineNum">      17 </span>                :            :  *
+<span class="lineNum">      18 </span>                :            :  * IDENTIFICATION
+<span class="lineNum">      19 </span>                :            :  *    src/backend/storage/lmgr/spin.c
+<span class="lineNum">      20 </span>                :            :  *
+<span class="lineNum">      21 </span>                :            :  *-------------------------------------------------------------------------
+<span class="lineNum">      22 </span>                :            :  */
+<span class="lineNum">      23 </span>                :            : #include &quot;postgres.h&quot;
+<span class="lineNum">      24 </span>                :            : 
+<span class="lineNum">      25 </span>                :            : #include &quot;storage/pg_sema.h&quot;
+<span class="lineNum">      26 </span>                :            : #include &quot;storage/shmem.h&quot;
+<span class="lineNum">      27 </span>                :            : #include &quot;storage/spin.h&quot;
+<span class="lineNum">      28 </span>                :            : 
+<span class="lineNum">      29 </span>                :            : 
+<span class="lineNum">      30 </span>                :            : #ifndef HAVE_SPINLOCKS
+<span class="lineNum">      31 </span>                :            : 
+<span class="lineNum">      32 </span>                :            : /*
+<span class="lineNum">      33 </span>                :            :  * No TAS, so spinlocks are implemented as PGSemaphores.
+<span class="lineNum">      34 </span>                :            :  */
+<span class="lineNum">      35 </span>                :            : 
+<span class="lineNum">      36 </span>                :            : #ifndef HAVE_ATOMICS
+<span class="lineNum">      37 </span>                :            : #define NUM_EMULATION_SEMAPHORES (NUM_SPINLOCK_SEMAPHORES + NUM_ATOMICS_SEMAPHORES)
+<span class="lineNum">      38 </span>                :            : #else
+<span class="lineNum">      39 </span>                :            : #define NUM_EMULATION_SEMAPHORES (NUM_SPINLOCK_SEMAPHORES)
+<span class="lineNum">      40 </span>                :            : #endif /* DISABLE_ATOMICS */
+<span class="lineNum">      41 </span>                :            : 
+<span class="lineNum">      42 </span>                :            : PGSemaphore *SpinlockSemaArray;
+<span class="lineNum">      43 </span>                :            : 
+<span class="lineNum">      44 </span>                :            : #else                           /* !HAVE_SPINLOCKS */
+<span class="lineNum">      45 </span>                :            : 
+<span class="lineNum">      46 </span>                :            : #define NUM_EMULATION_SEMAPHORES 0
+<span class="lineNum">      47 </span>                :            : 
+<span class="lineNum">      48 </span>                :            : #endif                          /* HAVE_SPINLOCKS */
+<span class="lineNum">      49 </span>                :            : 
+<span class="lineNum">      50 </span>                :            : /*
+<span class="lineNum">      51 </span>                :            :  * Report the amount of shared memory needed to store semaphores for spinlock
+<span class="lineNum">      52 </span>                :            :  * support.
+<a name="53"><span class="lineNum">      53 </span>                :            :  */</a>
+<span class="lineNum">      54 </span>                :            : Size
+<span class="lineNum">      55 </span>                :<span class="lineCov">      73163 : SpinlockSemaSize(void)</span>
+<span class="lineNum">      56 </span>                :            : {
+<span class="lineNum">      57 </span>                :<span class="lineCov">      73163 :     return NUM_EMULATION_SEMAPHORES * sizeof(PGSemaphore);</span>
+<span class="lineNum">      58 </span>                :            : }
+<span class="lineNum">      59 </span>                :            : 
+<span class="lineNum">      60 </span>                :            : /*
+<span class="lineNum">      61 </span>                :            :  * Report number of semaphores needed to support spinlocks.
+<a name="62"><span class="lineNum">      62 </span>                :            :  */</a>
+<span class="lineNum">      63 </span>                :            : int
+<span class="lineNum">      64 </span>                :<span class="lineCov">      73163 : SpinlockSemas(void)</span>
+<span class="lineNum">      65 </span>                :            : {
+<span class="lineNum">      66 </span>                :<span class="lineCov">      73163 :     return NUM_EMULATION_SEMAPHORES;</span>
+<span class="lineNum">      67 </span>                :            : }
+<span class="lineNum">      68 </span>                :            : 
+<span class="lineNum">      69 </span>                :            : #ifndef HAVE_SPINLOCKS
+<span class="lineNum">      70 </span>                :            : 
+<span class="lineNum">      71 </span>                :            : /*
+<span class="lineNum">      72 </span>                :            :  * Initialize spinlock emulation.
+<span class="lineNum">      73 </span>                :            :  *
+<span class="lineNum">      74 </span>                :            :  * This must be called after PGReserveSemaphores().
+<span class="lineNum">      75 </span>                :            :  */
+<span class="lineNum">      76 </span>                :            : void
+<span class="lineNum">      77 </span>                :            : SpinlockSemaInit(void)
+<span class="lineNum">      78 </span>                :            : {
+<span class="lineNum">      79 </span>                :            :     PGSemaphore *spinsemas;
+<span class="lineNum">      80 </span>                :            :     int         nsemas = SpinlockSemas();
+<span class="lineNum">      81 </span>                :            :     int         i;
+<span class="lineNum">      82 </span>                :            : 
+<span class="lineNum">      83 </span>                :            :     /*
+<span class="lineNum">      84 </span>                :            :      * We must use ShmemAllocUnlocked(), since the spinlock protecting
+<span class="lineNum">      85 </span>                :            :      * ShmemAlloc() obviously can't be ready yet.
+<span class="lineNum">      86 </span>                :            :      */
+<span class="lineNum">      87 </span>                :            :     spinsemas = (PGSemaphore *) ShmemAllocUnlocked(SpinlockSemaSize());
+<span class="lineNum">      88 </span>                :            :     for (i = 0; i &lt; nsemas; ++i)
+<span class="lineNum">      89 </span>                :            :         spinsemas[i] = PGSemaphoreCreate();
+<span class="lineNum">      90 </span>                :            :     SpinlockSemaArray = spinsemas;
+<span class="lineNum">      91 </span>                :            : }
+<span class="lineNum">      92 </span>                :            : 
+<span class="lineNum">      93 </span>                :            : /*
+<span class="lineNum">      94 </span>                :            :  * s_lock.h hardware-spinlock emulation using semaphores
+<span class="lineNum">      95 </span>                :            :  *
+<span class="lineNum">      96 </span>                :            :  * We map all spinlocks onto NUM_EMULATION_SEMAPHORES semaphores.  It's okay to
+<span class="lineNum">      97 </span>                :            :  * map multiple spinlocks onto one semaphore because no process should ever
+<span class="lineNum">      98 </span>                :            :  * hold more than one at a time.  We just need enough semaphores so that we
+<span class="lineNum">      99 </span>                :            :  * aren't adding too much extra contention from that.
+<span class="lineNum">     100 </span>                :            :  *
+<span class="lineNum">     101 </span>                :            :  * There is one exception to the restriction of only holding one spinlock at a
+<span class="lineNum">     102 </span>                :            :  * time, which is that it's ok if emulated atomic operations are nested inside
+<span class="lineNum">     103 </span>                :            :  * spinlocks. To avoid the danger of spinlocks and atomic using the same sema,
+<span class="lineNum">     104 </span>                :            :  * we make sure &quot;normal&quot; spinlocks and atomics backed by spinlocks use
+<span class="lineNum">     105 </span>                :            :  * distinct semaphores (see the nested argument to s_init_lock_sema).
+<span class="lineNum">     106 </span>                :            :  *
+<span class="lineNum">     107 </span>                :            :  * slock_t is just an int for this implementation; it holds the spinlock
+<span class="lineNum">     108 </span>                :            :  * number from 1..NUM_EMULATION_SEMAPHORES.  We intentionally ensure that 0
+<span class="lineNum">     109 </span>                :            :  * is not a valid value, so that testing with this code can help find
+<span class="lineNum">     110 </span>                :            :  * failures to initialize spinlocks.
+<span class="lineNum">     111 </span>                :            :  */
+<span class="lineNum">     112 </span>                :            : 
+<span class="lineNum">     113 </span>                :            : static inline void
+<span class="lineNum">     114 </span>                :            : s_check_valid(int lockndx)
+<span class="lineNum">     115 </span>                :            : {
+<span class="lineNum">     116 </span>                :            :     if (unlikely(lockndx &lt;= 0 || lockndx &gt; NUM_EMULATION_SEMAPHORES))
+<span class="lineNum">     117 </span>                :            :         elog(ERROR, &quot;invalid spinlock number: %d&quot;, lockndx);
+<span class="lineNum">     118 </span>                :            : }
+<span class="lineNum">     119 </span>                :            : 
+<span class="lineNum">     120 </span>                :            : void
+<span class="lineNum">     121 </span>                :            : s_init_lock_sema(volatile slock_t *lock, bool nested)
+<span class="lineNum">     122 </span>                :            : {
+<span class="lineNum">     123 </span>                :            :     static uint32 counter = 0;
+<span class="lineNum">     124 </span>                :            :     uint32      offset;
+<span class="lineNum">     125 </span>                :            :     uint32      sema_total;
+<span class="lineNum">     126 </span>                :            :     uint32      idx;
+<span class="lineNum">     127 </span>                :            : 
+<span class="lineNum">     128 </span>                :            :     if (nested)
+<span class="lineNum">     129 </span>                :            :     {
+<span class="lineNum">     130 </span>                :            :         /*
+<span class="lineNum">     131 </span>                :            :          * To allow nesting atomics inside spinlocked sections, use a
+<span class="lineNum">     132 </span>                :            :          * different spinlock. See comment above.
+<span class="lineNum">     133 </span>                :            :          */
+<span class="lineNum">     134 </span>                :            :         offset = 1 + NUM_SPINLOCK_SEMAPHORES;
+<span class="lineNum">     135 </span>                :            :         sema_total = NUM_ATOMICS_SEMAPHORES;
+<span class="lineNum">     136 </span>                :            :     }
+<span class="lineNum">     137 </span>                :            :     else
+<span class="lineNum">     138 </span>                :            :     {
+<span class="lineNum">     139 </span>                :            :         offset = 1;
+<span class="lineNum">     140 </span>                :            :         sema_total = NUM_SPINLOCK_SEMAPHORES;
+<span class="lineNum">     141 </span>                :            :     }
+<span class="lineNum">     142 </span>                :            : 
+<span class="lineNum">     143 </span>                :            :     idx = (counter++ % sema_total) + offset;
+<span class="lineNum">     144 </span>                :            : 
+<span class="lineNum">     145 </span>                :            :     /* double check we did things correctly */
+<span class="lineNum">     146 </span>                :            :     s_check_valid(idx);
+<span class="lineNum">     147 </span>                :            : 
+<span class="lineNum">     148 </span>                :            :     *lock = idx;
+<span class="lineNum">     149 </span>                :            : }
+<span class="lineNum">     150 </span>                :            : 
+<span class="lineNum">     151 </span>                :            : void
+<span class="lineNum">     152 </span>                :            : s_unlock_sema(volatile slock_t *lock)
+<span class="lineNum">     153 </span>                :            : {
+<span class="lineNum">     154 </span>                :            :     int         lockndx = *lock;
+<span class="lineNum">     155 </span>                :            : 
+<span class="lineNum">     156 </span>                :            :     s_check_valid(lockndx);
+<span class="lineNum">     157 </span>                :            : 
+<span class="lineNum">     158 </span>                :            :     PGSemaphoreUnlock(SpinlockSemaArray[lockndx - 1]);
+<span class="lineNum">     159 </span>                :            : }
+<span class="lineNum">     160 </span>                :            : 
+<span class="lineNum">     161 </span>                :            : bool
+<span class="lineNum">     162 </span>                :            : s_lock_free_sema(volatile slock_t *lock)
+<span class="lineNum">     163 </span>                :            : {
+<span class="lineNum">     164 </span>                :            :     /* We don't currently use S_LOCK_FREE anyway */
+<span class="lineNum">     165 </span>                :            :     elog(ERROR, &quot;spin.c does not support S_LOCK_FREE()&quot;);
+<span class="lineNum">     166 </span>                :            :     return false;
+<span class="lineNum">     167 </span>                :            : }
+<span class="lineNum">     168 </span>                :            : 
+<span class="lineNum">     169 </span>                :            : int
+<span class="lineNum">     170 </span>                :            : tas_sema(volatile slock_t *lock)
+<span class="lineNum">     171 </span>                :            : {
+<span class="lineNum">     172 </span>                :            :     int         lockndx = *lock;
+<span class="lineNum">     173 </span>                :            : 
+<span class="lineNum">     174 </span>                :            :     s_check_valid(lockndx);
+<span class="lineNum">     175 </span>                :            : 
+<span class="lineNum">     176 </span>                :            :     /* Note that TAS macros return 0 if *success* */
+<span class="lineNum">     177 </span>                :            :     return !PGSemaphoreTryLock(SpinlockSemaArray[lockndx - 1]);
+<span class="lineNum">     178 </span>                :            : }
+<span class="lineNum">     179 </span>                :            : 
+<span class="lineNum">     180 </span>                :            : #endif                          /* !HAVE_SPINLOCKS */
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

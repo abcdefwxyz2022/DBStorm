@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<format>
+    <integer>
+        <length_limit>11</length_limit>
+    </integer>
+    <varchar>
+        <length_limit>140</length_limit>
+    </varchar>
+    <double_decimal>
+        <decimal_precision_limit>10</decimal_precision_limit>
+        <decimal_scale_limit>0</decimal_scale_limit>
+        <double_precision_limit>38</double_precision_limit>
+        <double_scale_limit>17</double_scale_limit>
+    </double_decimal>
+    <blob>
+        <length_limit>255</length_limit>
+    </blob>
+</format>

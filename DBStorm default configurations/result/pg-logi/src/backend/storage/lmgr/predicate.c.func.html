@@ -1,0 +1,372 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/storage/lmgr/predicate.c - functions</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/storage/lmgr</a> - predicate.c<span style="font-size: 80%;"> (<a href="predicate.c.gcov.html">source</a> / functions)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">1011</td>
+            <td class="headerCovTableEntry">1456</td>
+            <td class="headerCovTableEntryLo">69.4 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:34:54</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">56</td>
+            <td class="headerCovTableEntry">71</td>
+            <td class="headerCovTableEntryMed">78.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">520</td>
+            <td class="headerCovTableEntry">841</td>
+            <td class="headerCovTableEntryLo">61.8 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <center>
+  <table width="60%" cellpadding=1 cellspacing=1 border=0>
+    <tr><td><br></td></tr>
+    <tr>
+      <td width="80%" class="tableHead">Function Name <span class="tableHeadSort"><img src="../../../../glass.png" width=10 height=14 alt="Sort by function name" title="Sort by function name" border=0></span></td>
+      <td width="20%" class="tableHead">Hit count <span class="tableHeadSort"><a href="predicate.c.func-sort-c.html"><img src="../../../../updown.png" width=10 height=14 alt="Sort by hit count" title="Sort by hit count" border=0></a></span></td>
+    </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#5006">AtPrepare_PredicateLocks</a></td>
+              <td class="coverFnHi">147426</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#5276">AttachSerializableXact</a></td>
+              <td class="coverFnHi">36</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2325">CheckAndPromotePredicateLockRequest</a></td>
+              <td class="coverFnHi">620239</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#4526">CheckForSerializableConflictIn</a></td>
+              <td class="coverFnHi">1994408</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#4130">CheckForSerializableConflictOut</a></td>
+              <td class="coverFnHi">325918478</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1072">CheckPointPredicate</a></td>
+              <td class="coverFnHi">196</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#4610">CheckTableForSerializableConflictIn</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#4344">CheckTargetForConflictsIn</a></td>
+              <td class="coverFnHi">786486</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#3767">ClearOldPredicateLocks</a></td>
+              <td class="coverFnHi">2428</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2100">CoarserLockCovers</a></td>
+              <td class="coverFnHi">1005678</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1928">CreateLocalPredicateLockHash</a></td>
+              <td class="coverFnHi">91771</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#581">CreatePredXact</a></td>
+              <td class="coverFnHi">110955</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2452">CreatePredicateLock</a></td>
+              <td class="coverFnHi">620239</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2390">DecrementParentLocks</a></td>
+              <td class="coverFnHi">255986</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2203">DeleteChildTargetLocks</a></td>
+              <td class="coverFnHi">334591</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2686">DeleteLockTarget</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2974">DropAllPredicateLocksFromTable</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#613">FirstPredXact</a></td>
+              <td class="coverFnHi">8463</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#4702">FlagRWConflict</a></td>
+              <td class="coverFnHi">1215653</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#751">FlagSxactUnsafe</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2061">GetParentPredicateLockTag</a></td>
+              <td class="coverFnHi">3898303</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1449">GetPredicateLockStatusData</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1564">GetSafeSnapshot</a></td>
+              <td class="coverFnHi">1201</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1634">GetSafeSnapshotBlockingPids</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1686">GetSerializableTransactionSnapshot</a></td>
+              <td class="coverFnHi">60283</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1768">GetSerializableTransactionSnapshotInt</a></td>
+              <td class="coverFnHi">91774</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1156">InitPredicateLocks</a></td>
+              <td class="coverFnHi">19181</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2288">MaxPredicateChildLocks</a></td>
+              <td class="coverFnHi">766814</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#628">NextPredXact</a></td>
+              <td class="coverFnHi">1352245</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#909">OldSerXidAdd</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#980">OldSerXidGetMinConflictCommitSeqNo</a></td>
+              <td class="coverFnHi">150594</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#867">OldSerXidInit</a></td>
+              <td class="coverFnHi">19181</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#792">OldSerXidPagePrecedesLogically</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1021">OldSerXidSetActiveSerXmin</a></td>
+              <td class="coverFnHi">2769</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#4737">OnConflict_CheckForSerializationFailure</a></td>
+              <td class="coverFnHi">1215653</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1997">PageIsPredicateLocked</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#5082">PostPrepare_PredicateLocks</a></td>
+              <td class="coverFnHi">147426</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#4912">PreCommit_CheckForSerializationFailure</a></td>
+              <td class="coverFnHi">601070</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2517">PredicateLockAcquire</a></td>
+              <td class="coverFnHi">1517562</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2034">PredicateLockExists</a></td>
+              <td class="coverFnHi">4139125</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2599">PredicateLockPage</a></td>
+              <td class="coverFnHi">4408783</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#3276">PredicateLockPageCombine</a></td>
+              <td class="coverFnHi">19</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#3191">PredicateLockPageSplit</a></td>
+              <td class="coverFnHi">10249</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2576">PredicateLockRelation</a></td>
+              <td class="coverFnHi">1009502</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1361">PredicateLockShmemSize</a></td>
+              <td class="coverFnHi">19181</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2621">PredicateLockTuple</a></td>
+              <td class="coverFnHi">15428987</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#5104">PredicateLockTwoPhaseFinish</a></td>
+              <td class="coverFnHi">147401</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#496">PredicateLockingNeededForRelation</a></td>
+              <td class="coverFnHi">136063913</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#654">RWConflictExists</a></td>
+              <td class="coverFnHi">6563056</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1948">RegisterPredicateLockingXid</a></td>
+              <td class="coverFnHi">286988</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#3924">ReleaseOneSerializableXact</a></td>
+              <td class="coverFnHi">91789</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#598">ReleasePredXact</a></td>
+              <td class="coverFnHi">91774</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#3356">ReleasePredicateLocks</a></td>
+              <td class="coverFnHi">757141</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#3749">ReleasePredicateLocksLocal</a></td>
+              <td class="coverFnHi">91863</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#743">ReleaseRWConflict</a></td>
+              <td class="coverFnHi">1330011</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2129">RemoveScratchTarget</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2172">RemoveTargetIfNoLongerUsed</a></td>
+              <td class="coverFnHi">622787</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2150">RestoreScratchTarget</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#515">SerializationNeededForRead</a></td>
+              <td class="coverFnHi">346765750</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#559">SerializationNeededForWrite</a></td>
+              <td class="coverFnHi">1994408</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#3298">SetNewSxactGlobalXmin</a></td>
+              <td class="coverFnHi">2428</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#713">SetPossibleUnsafeConflict</a></td>
+              <td class="coverFnHi">120037</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#687">SetRWConflict</a></td>
+              <td class="coverFnHi">1209974</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1726">SetSerializableTransactionSnapshot</a></td>
+              <td class="coverFnHi">32714</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#5267">ShareSerializableXact</a></td>
+              <td class="coverFnHi">18</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1507">SummarizeOldestCommittedSxact</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#3170">TransferPredicateLocksToHeapRelation</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#2757">TransferPredicateLocksToNewTarget</a></td>
+              <td class="coverFnHi">1462</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#4087">XidIsConcurrent</a></td>
+              <td class="coverFnHi">2390548</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#1423">predicatelock_hash</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="predicate.c.gcov.html#5131">predicatelock_twophase_recover</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+  </table>
+  <br>
+  </center>
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

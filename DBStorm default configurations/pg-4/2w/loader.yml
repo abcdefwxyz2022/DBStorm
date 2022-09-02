@@ -1,0 +1,38 @@
+# use load data local infile to load inital data(ensure that the db server enable it )
+useLoadInfile: false
+# number of txn templates generate
+numberOfTransactionCase: 300
+# number of loader threads
+numberOfLoader: 24
+# number of txns executed by EACH thread
+execCountPerLoader: 20
+# query timeout
+queryTimeout: 100
+# timeout unit: MICROSECONDS. MILLISECONDS, SECONDS, MINUTES
+queryTimeoutUnit: MILLISECONDS
+# auto transform delete and insert when the original query is illegal
+autoTransform: true
+# random choose isolation for each txn, set false and then every txn in the same thread will have the same isolation
+randIsolationPerTransaction: false
+# visit distribution: NORMAL, UNIFORM
+visitDistribution: ZIPF
+# parameter of visit distribution uniform:"min,max"; normal: "mu,sigma"; ZIPF："r,alpha"
+distributionParams: "2000,0.4"   #2000,0.4
+# use visit distribution for select
+enableForSelect: false
+# clear debug info in traces
+clearDebugInfo: true
+# use the txn template and schema in paper
+useExeTmpl: false
+# use the schema in paper only(when set useExeTmpl false)
+useExeSchema: false
+# the table size of table in ExeSchema
+exeTableSize: 2000
+# serial load
+serial: false
+# isolation: percantage
+isolation:
+  READ_UNCOMMITTED: 10
+  READ_COMMITTED: 10
+  REPEATABLE_READ: 10
+  SERIALIZABLE: 70

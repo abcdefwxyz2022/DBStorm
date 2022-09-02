@@ -1,0 +1,300 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/utils/time/snapmgr.c - functions</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/utils/time</a> - snapmgr.c<span style="font-size: 80%;"> (<a href="snapmgr.c.gcov.html">source</a> / functions)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">546</td>
+            <td class="headerCovTableEntry">688</td>
+            <td class="headerCovTableEntryMed">79.4 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:34:41</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">45</td>
+            <td class="headerCovTableEntry">53</td>
+            <td class="headerCovTableEntryMed">84.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">244</td>
+            <td class="headerCovTableEntry">450</td>
+            <td class="headerCovTableEntryLo">54.2 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <center>
+  <table width="60%" cellpadding=1 cellspacing=1 border=0>
+    <tr><td><br></td></tr>
+    <tr>
+      <td width="80%" class="tableHead">Function Name <span class="tableHeadSort"><img src="../../../../glass.png" width=10 height=14 alt="Sort by function name" title="Sort by function name" border=0></span></td>
+      <td width="20%" class="tableHead">Hit count <span class="tableHeadSort"><a href="snapmgr.c.func-sort-c.html"><img src="../../../../updown.png" width=10 height=14 alt="Sort by hit count" title="Sort by hit count" border=0></a></span></td>
+    </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#851">ActiveSnapshotSet</a></td>
+              <td class="coverFnHi">1130820</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1704">AlignTimestampToMinuteBoundary</a></td>
+              <td class="coverFnHi">25676590</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1089">AtEOXact_Snapshot</a></td>
+              <td class="coverFnHi">309704</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1053">AtSubAbort_Snapshot</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1032">AtSubCommit_Snapshot</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#660">CopySnapshot</a></td>
+              <td class="coverFnHi">3478350</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1648">DeleteAllExportedSnapshotFiles</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#2076">EstimateSnapshotSpace</a></td>
+              <td class="coverFnHi">93</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1189">ExportSnapshot</a></td>
+              <td class="coverFnHi">3420</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#715">FreeSnapshot</a></td>
+              <td class="coverFnHi">3384252</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#839">GetActiveSnapshot</a></td>
+              <td class="coverFnHi">762260</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#440">GetCatalogSnapshot</a></td>
+              <td class="coverFnHi">1376502</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#961">GetFullRecentGlobalXmin</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#379">GetLatestSnapshot</a></td>
+              <td class="coverFnHi">1773</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#462">GetNonHistoricCatalogSnapshot</a></td>
+              <td class="coverFnHi">1376502</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1743">GetOldSnapshotThresholdTimestamp</a></td>
+              <td class="coverFnHi">60058055</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#411">GetOldestSnapshot</a></td>
+              <td class="coverFnHi">55991</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1718">GetSnapshotCurrentTimestamp</a></td>
+              <td class="coverFnHi">25676590</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#304">GetTransactionSnapshot</a></td>
+              <td class="coverFnHi">5735043</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#2056">HistoricSnapshotActive</a></td>
+              <td class="coverFnHi">7465669</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#2062">HistoricSnapshotGetTupleCids</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1460">ImportSnapshot</a></td>
+              <td class="coverFnHi">17138</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#510">InvalidateCatalogSnapshot</a></td>
+              <td class="coverFnHi">1676742</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#531">InvalidateCatalogSnapshotConditionally</a></td>
+              <td class="coverFnHi">5266669</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1880">MaintainOldSnapshotTimeMapping</a></td>
+              <td class="coverFnHi">1153543</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#812">PopActiveSnapshot</a></td>
+              <td class="coverFnHi">2528236</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#733">PushActiveSnapshot</a></td>
+              <td class="coverFnHi">2561728</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#769">PushCopiedSnapshot</a></td>
+              <td class="coverFnHi">145678</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#863">RegisterSnapshot</a></td>
+              <td class="coverFnHi">4401030</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#876">RegisterSnapshotOnOwner</a></td>
+              <td class="coverFnHi">2889623</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#2159">RestoreSnapshot</a></td>
+              <td class="coverFnHi">210</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#2223">RestoreTransactionSnapshot</a></td>
+              <td class="coverFnHi">60</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#2100">SerializeSnapshot</a></td>
+              <td class="coverFnHi">93</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1755">SetOldSnapshotThresholdTimestamp</a></td>
+              <td class="coverFnHi">38</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#565">SetTransactionSnapshot</a></td>
+              <td class="coverFnHi">17185</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#2033">SetupHistoricSnapshot</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#267">SnapMgrInit</a></td>
+              <td class="coverFnHi">9163</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#251">SnapMgrShmemSize</a></td>
+              <td class="coverFnHi">18326</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1008">SnapshotResetXmin</a></td>
+              <td class="coverFnHi">4607087</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#544">SnapshotSetCommandId</a></td>
+              <td class="coverFnHi">320357</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#2049">TeardownHistoricSnapshot</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1687">ThereAreNoPriorRegisteredSnapshots</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1773">TransactionIdLimitedForOldSnapshots</a></td>
+              <td class="coverFnHi">24523048</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#905">UnregisterSnapshot</a></td>
+              <td class="coverFnHi">4335825</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#918">UnregisterSnapshotFromOwner</a></td>
+              <td class="coverFnHi">2889623</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#781">UpdateActiveSnapshotCommandId</a></td>
+              <td class="coverFnHi">87606</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1635">XactHasExportedSnapshots</a></td>
+              <td class="coverFnHi">44661</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#2239">XidInMVCCSnapshot</a></td>
+              <td class="coverFnHi">148559521</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1380">parseIntFromText</a></td>
+              <td class="coverFnHi">119875</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1430">parseVxidFromText</a></td>
+              <td class="coverFnHi">17125</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1405">parseXidFromText</a></td>
+              <td class="coverFnHi">340915</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#1365">pg_export_snapshot</a></td>
+              <td class="coverFnHi">3420</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="snapmgr.c.gcov.html#944">xmin_cmp</a></td>
+              <td class="coverFnHi">1853136</td>
+            </tr>
+  </table>
+  <br>
+  </center>
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

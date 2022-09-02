@@ -1,0 +1,485 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/access/transam/subtrans.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/access/transam</a> - subtrans.c<span style="font-size: 80%;"> (source / <a href="subtrans.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">67</td>
+            <td class="headerCovTableEntry">92</td>
+            <td class="headerCovTableEntryLo">72.8 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:33:55</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">11</td>
+            <td class="headerCovTableEntry">13</td>
+            <td class="headerCovTableEntryMed">84.6 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">13</td>
+            <td class="headerCovTableEntry">24</td>
+            <td class="headerCovTableEntryLo">54.2 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">           Branch data     Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>                :            : /*-------------------------------------------------------------------------</a>
+<span class="lineNum">       2 </span>                :            :  *
+<span class="lineNum">       3 </span>                :            :  * subtrans.c
+<span class="lineNum">       4 </span>                :            :  *      PostgreSQL subtransaction-log manager
+<span class="lineNum">       5 </span>                :            :  *
+<span class="lineNum">       6 </span>                :            :  * The pg_subtrans manager is a pg_xact-like manager that stores the parent
+<span class="lineNum">       7 </span>                :            :  * transaction Id for each transaction.  It is a fundamental part of the
+<span class="lineNum">       8 </span>                :            :  * nested transactions implementation.  A main transaction has a parent
+<span class="lineNum">       9 </span>                :            :  * of InvalidTransactionId, and each subtransaction has its immediate parent.
+<span class="lineNum">      10 </span>                :            :  * The tree can easily be walked from child to parent, but not in the
+<span class="lineNum">      11 </span>                :            :  * opposite direction.
+<span class="lineNum">      12 </span>                :            :  *
+<span class="lineNum">      13 </span>                :            :  * This code is based on xact.c, but the robustness requirements
+<span class="lineNum">      14 </span>                :            :  * are completely different from pg_xact, because we only need to remember
+<span class="lineNum">      15 </span>                :            :  * pg_subtrans information for currently-open transactions.  Thus, there is
+<span class="lineNum">      16 </span>                :            :  * no need to preserve data over a crash and restart.
+<span class="lineNum">      17 </span>                :            :  *
+<span class="lineNum">      18 </span>                :            :  * There are no XLOG interactions since we do not care about preserving
+<span class="lineNum">      19 </span>                :            :  * data across crashes.  During database startup, we simply force the
+<span class="lineNum">      20 </span>                :            :  * currently-active page of SUBTRANS to zeroes.
+<span class="lineNum">      21 </span>                :            :  *
+<span class="lineNum">      22 </span>                :            :  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+<span class="lineNum">      23 </span>                :            :  * Portions Copyright (c) 1994, Regents of the University of California
+<span class="lineNum">      24 </span>                :            :  *
+<span class="lineNum">      25 </span>                :            :  * src/backend/access/transam/subtrans.c
+<span class="lineNum">      26 </span>                :            :  *
+<span class="lineNum">      27 </span>                :            :  *-------------------------------------------------------------------------
+<span class="lineNum">      28 </span>                :            :  */
+<span class="lineNum">      29 </span>                :            : #include &quot;postgres.h&quot;
+<span class="lineNum">      30 </span>                :            : 
+<span class="lineNum">      31 </span>                :            : #include &quot;access/slru.h&quot;
+<span class="lineNum">      32 </span>                :            : #include &quot;access/subtrans.h&quot;
+<span class="lineNum">      33 </span>                :            : #include &quot;access/transam.h&quot;
+<span class="lineNum">      34 </span>                :            : #include &quot;pg_trace.h&quot;
+<span class="lineNum">      35 </span>                :            : #include &quot;utils/snapmgr.h&quot;
+<span class="lineNum">      36 </span>                :            : 
+<span class="lineNum">      37 </span>                :            : 
+<span class="lineNum">      38 </span>                :            : /*
+<span class="lineNum">      39 </span>                :            :  * Defines for SubTrans page sizes.  A page is the same BLCKSZ as is used
+<span class="lineNum">      40 </span>                :            :  * everywhere else in Postgres.
+<span class="lineNum">      41 </span>                :            :  *
+<span class="lineNum">      42 </span>                :            :  * Note: because TransactionIds are 32 bits and wrap around at 0xFFFFFFFF,
+<span class="lineNum">      43 </span>                :            :  * SubTrans page numbering also wraps around at
+<span class="lineNum">      44 </span>                :            :  * 0xFFFFFFFF/SUBTRANS_XACTS_PER_PAGE, and segment numbering at
+<span class="lineNum">      45 </span>                :            :  * 0xFFFFFFFF/SUBTRANS_XACTS_PER_PAGE/SLRU_PAGES_PER_SEGMENT.  We need take no
+<span class="lineNum">      46 </span>                :            :  * explicit notice of that fact in this module, except when comparing segment
+<span class="lineNum">      47 </span>                :            :  * and page numbers in TruncateSUBTRANS (see SubTransPagePrecedes) and zeroing
+<span class="lineNum">      48 </span>                :            :  * them in StartupSUBTRANS.
+<span class="lineNum">      49 </span>                :            :  */
+<span class="lineNum">      50 </span>                :            : 
+<span class="lineNum">      51 </span>                :            : /* We need four bytes per xact */
+<span class="lineNum">      52 </span>                :            : #define SUBTRANS_XACTS_PER_PAGE (BLCKSZ / sizeof(TransactionId))
+<span class="lineNum">      53 </span>                :            : 
+<span class="lineNum">      54 </span>                :            : #define TransactionIdToPage(xid) ((xid) / (TransactionId) SUBTRANS_XACTS_PER_PAGE)
+<span class="lineNum">      55 </span>                :            : #define TransactionIdToEntry(xid) ((xid) % (TransactionId) SUBTRANS_XACTS_PER_PAGE)
+<span class="lineNum">      56 </span>                :            : 
+<span class="lineNum">      57 </span>                :            : 
+<span class="lineNum">      58 </span>                :            : /*
+<span class="lineNum">      59 </span>                :            :  * Link to shared-memory data structures for SUBTRANS control
+<span class="lineNum">      60 </span>                :            :  */
+<span class="lineNum">      61 </span>                :            : static SlruCtlData SubTransCtlData;
+<span class="lineNum">      62 </span>                :            : 
+<span class="lineNum">      63 </span>                :            : #define SubTransCtl  (&amp;SubTransCtlData)
+<span class="lineNum">      64 </span>                :            : 
+<span class="lineNum">      65 </span>                :            : 
+<span class="lineNum">      66 </span>                :            : static int  ZeroSUBTRANSPage(int pageno);
+<span class="lineNum">      67 </span>                :            : static bool SubTransPagePrecedes(int page1, int page2);
+<span class="lineNum">      68 </span>                :            : 
+<span class="lineNum">      69 </span>                :            : 
+<span class="lineNum">      70 </span>                :            : /*
+<span class="lineNum">      71 </span>                :            :  * Record the parent of a subtransaction in the subtrans log.
+<a name="72"><span class="lineNum">      72 </span>                :            :  */</a>
+<span class="lineNum">      73 </span>                :            : void
+<span class="lineNum">      74 </span>                :<span class="lineNoCov">          0 : SubTransSetParent(TransactionId xid, TransactionId parent)</span>
+<span class="lineNum">      75 </span>                :            : {
+<span class="lineNum">      76 </span>                :<span class="lineNoCov">          0 :     int         pageno = TransactionIdToPage(xid);</span>
+<span class="lineNum">      77 </span>                :<span class="lineNoCov">          0 :     int         entryno = TransactionIdToEntry(xid);</span>
+<span class="lineNum">      78 </span>                :            :     int         slotno;
+<span class="lineNum">      79 </span>                :            :     TransactionId *ptr;
+<span class="lineNum">      80 </span>                :            : 
+<span class="lineNum">      81 </span>                :            :     Assert(TransactionIdIsValid(parent));
+<span class="lineNum">      82 </span>                :            :     Assert(TransactionIdFollows(xid, parent));
+<span class="lineNum">      83 </span>                :            : 
+<span class="lineNum">      84 </span>                :<span class="lineNoCov">          0 :     LWLockAcquire(SubtransControlLock, LW_EXCLUSIVE);</span>
+<span class="lineNum">      85 </span>                :            : 
+<span class="lineNum">      86 </span>                :<span class="lineNoCov">          0 :     slotno = SimpleLruReadPage(SubTransCtl, pageno, true, xid);</span>
+<span class="lineNum">      87 </span>                :<span class="lineNoCov">          0 :     ptr = (TransactionId *) SubTransCtl-&gt;shared-&gt;page_buffer[slotno];</span>
+<span class="lineNum">      88 </span>                :<span class="lineNoCov">          0 :     ptr += entryno;</span>
+<span class="lineNum">      89 </span>                :            : 
+<span class="lineNum">      90 </span>                :            :     /*
+<span class="lineNum">      91 </span>                :            :      * It's possible we'll try to set the parent xid multiple times but we
+<span class="lineNum">      92 </span>                :            :      * shouldn't ever be changing the xid from one valid xid to another valid
+<span class="lineNum">      93 </span>                :            :      * xid, which would corrupt the data structure.
+<span class="lineNum">      94 </span>                :            :      */
+<span class="lineNum">      95 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (*ptr != parent)</span>
+<span class="lineNum">      96 </span>                :            :     {
+<span class="lineNum">      97 </span>                :            :         Assert(*ptr == InvalidTransactionId);
+<span class="lineNum">      98 </span>                :<span class="lineNoCov">          0 :         *ptr = parent;</span>
+<span class="lineNum">      99 </span>                :<span class="lineNoCov">          0 :         SubTransCtl-&gt;shared-&gt;page_dirty[slotno] = true;</span>
+<span class="lineNum">     100 </span>                :            :     }
+<span class="lineNum">     101 </span>                :            : 
+<span class="lineNum">     102 </span>                :<span class="lineNoCov">          0 :     LWLockRelease(SubtransControlLock);</span>
+<span class="lineNum">     103 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     104 </span>                :            : 
+<span class="lineNum">     105 </span>                :            : /*
+<span class="lineNum">     106 </span>                :            :  * Interrogate the parent of a transaction in the subtrans log.
+<a name="107"><span class="lineNum">     107 </span>                :            :  */</a>
+<span class="lineNum">     108 </span>                :            : TransactionId
+<span class="lineNum">     109 </span>                :<span class="lineCov">     157859 : SubTransGetParent(TransactionId xid)</span>
+<span class="lineNum">     110 </span>                :            : {
+<span class="lineNum">     111 </span>                :<span class="lineCov">     157859 :     int         pageno = TransactionIdToPage(xid);</span>
+<span class="lineNum">     112 </span>                :<span class="lineCov">     157859 :     int         entryno = TransactionIdToEntry(xid);</span>
+<span class="lineNum">     113 </span>                :            :     int         slotno;
+<span class="lineNum">     114 </span>                :            :     TransactionId *ptr;
+<span class="lineNum">     115 </span>                :            :     TransactionId parent;
+<span class="lineNum">     116 </span>                :            : 
+<span class="lineNum">     117 </span>                :            :     /* Can't ask about stuff that might not be around anymore */
+<span class="lineNum">     118 </span>                :            :     Assert(TransactionIdFollowsOrEquals(xid, TransactionXmin));
+<span class="lineNum">     119 </span>                :            : 
+<span class="lineNum">     120 </span>                :            :     /* Bootstrap and frozen XIDs have no parent */
+<span class="lineNum">     121 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 157859 times"> + </span>]:<span class="lineCov">     157859 :     if (!TransactionIdIsNormal(xid))</span>
+<span class="lineNum">     122 </span>                :<span class="lineNoCov">          0 :         return InvalidTransactionId;</span>
+<span class="lineNum">     123 </span>                :            : 
+<span class="lineNum">     124 </span>                :            :     /* lock is acquired by SimpleLruReadPage_ReadOnly */
+<span class="lineNum">     125 </span>                :            : 
+<span class="lineNum">     126 </span>                :<span class="lineCov">     157859 :     slotno = SimpleLruReadPage_ReadOnly(SubTransCtl, pageno, xid);</span>
+<span class="lineNum">     127 </span>                :<span class="lineCov">     157859 :     ptr = (TransactionId *) SubTransCtl-&gt;shared-&gt;page_buffer[slotno];</span>
+<span class="lineNum">     128 </span>                :<span class="lineCov">     157859 :     ptr += entryno;</span>
+<span class="lineNum">     129 </span>                :            : 
+<span class="lineNum">     130 </span>                :<span class="lineCov">     157859 :     parent = *ptr;</span>
+<span class="lineNum">     131 </span>                :            : 
+<span class="lineNum">     132 </span>                :<span class="lineCov">     157859 :     LWLockRelease(SubtransControlLock);</span>
+<span class="lineNum">     133 </span>                :            : 
+<span class="lineNum">     134 </span>                :<span class="lineCov">     157859 :     return parent;</span>
+<span class="lineNum">     135 </span>                :            : }
+<span class="lineNum">     136 </span>                :            : 
+<span class="lineNum">     137 </span>                :            : /*
+<span class="lineNum">     138 </span>                :            :  * SubTransGetTopmostTransaction
+<span class="lineNum">     139 </span>                :            :  *
+<span class="lineNum">     140 </span>                :            :  * Returns the topmost transaction of the given transaction id.
+<span class="lineNum">     141 </span>                :            :  *
+<span class="lineNum">     142 </span>                :            :  * Because we cannot look back further than TransactionXmin, it is possible
+<span class="lineNum">     143 </span>                :            :  * that this function will lie and return an intermediate subtransaction ID
+<span class="lineNum">     144 </span>                :            :  * instead of the true topmost parent ID.  This is OK, because in practice
+<span class="lineNum">     145 </span>                :            :  * we only care about detecting whether the topmost parent is still running
+<span class="lineNum">     146 </span>                :            :  * or is part of a current snapshot's list of still-running transactions.
+<span class="lineNum">     147 </span>                :            :  * Therefore, any XID before TransactionXmin is as good as any other.
+<a name="148"><span class="lineNum">     148 </span>                :            :  */</a>
+<span class="lineNum">     149 </span>                :            : TransactionId
+<span class="lineNum">     150 </span>                :<span class="lineCov">     157859 : SubTransGetTopmostTransaction(TransactionId xid)</span>
+<span class="lineNum">     151 </span>                :            : {
+<span class="lineNum">     152 </span>                :<span class="lineCov">     157859 :     TransactionId parentXid = xid,</span>
+<span class="lineNum">     153 </span>                :<span class="lineCov">     157859 :                 previousXid = xid;</span>
+<span class="lineNum">     154 </span>                :            : 
+<span class="lineNum">     155 </span>                :            :     /* Can't ask about stuff that might not be around anymore */
+<span class="lineNum">     156 </span>                :            :     Assert(TransactionIdFollowsOrEquals(xid, TransactionXmin));
+<span class="lineNum">     157 </span>                :            : 
+<span class="lineNum">     158 </span>        [<span class="branchCov" title="Branch 0 was taken 157859 times"> + </span><span class="branchCov" title="Branch 1 was taken 157859 times"> + </span>]:<span class="lineCov">     315718 :     while (TransactionIdIsValid(parentXid))</span>
+<span class="lineNum">     159 </span>                :            :     {
+<span class="lineNum">     160 </span>                :<span class="lineCov">     157859 :         previousXid = parentXid;</span>
+<span class="lineNum">     161 </span>        [<span class="branchNoCov" title="Branch 1 was not taken"> - </span><span class="branchCov" title="Branch 2 was taken 157859 times"> + </span>]:<span class="lineCov">     157859 :         if (TransactionIdPrecedes(parentXid, TransactionXmin))</span>
+<span class="lineNum">     162 </span>                :<span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     163 </span>                :<span class="lineCov">     157859 :         parentXid = SubTransGetParent(parentXid);</span>
+<span class="lineNum">     164 </span>                :            : 
+<span class="lineNum">     165 </span>                :            :         /*
+<span class="lineNum">     166 </span>                :            :          * By convention the parent xid gets allocated first, so should always
+<span class="lineNum">     167 </span>                :            :          * precede the child xid. Anything else points to a corrupted data
+<span class="lineNum">     168 </span>                :            :          * structure that could lead to an infinite loop, so exit.
+<span class="lineNum">     169 </span>                :            :          */
+<span class="lineNum">     170 </span>        [<span class="branchNoCov" title="Branch 1 was not taken"> - </span><span class="branchCov" title="Branch 2 was taken 157859 times"> + </span>]:<span class="lineCov">     157859 :         if (!TransactionIdPrecedes(parentXid, previousXid))</span>
+<span class="lineNum">     171 </span>                :<span class="lineNoCov">          0 :             elog(ERROR, &quot;pg_subtrans contains invalid entry: xid %u points to parent xid %u&quot;,</span>
+<span class="lineNum">     172 </span>                :            :                  previousXid, parentXid);
+<span class="lineNum">     173 </span>                :            :     }
+<span class="lineNum">     174 </span>                :            : 
+<span class="lineNum">     175 </span>                :            :     Assert(TransactionIdIsValid(previousXid));
+<span class="lineNum">     176 </span>                :            : 
+<span class="lineNum">     177 </span>                :<span class="lineCov">     157859 :     return previousXid;</span>
+<span class="lineNum">     178 </span>                :            : }
+<span class="lineNum">     179 </span>                :            : 
+<span class="lineNum">     180 </span>                :            : 
+<span class="lineNum">     181 </span>                :            : /*
+<span class="lineNum">     182 </span>                :            :  * Initialization of shared memory for SUBTRANS
+<a name="183"><span class="lineNum">     183 </span>                :            :  */</a>
+<span class="lineNum">     184 </span>                :            : Size
+<span class="lineNum">     185 </span>                :<span class="lineCov">      16534 : SUBTRANSShmemSize(void)</span>
+<span class="lineNum">     186 </span>                :            : {
+<span class="lineNum">     187 </span>                :<span class="lineCov">      16534 :     return SimpleLruShmemSize(NUM_SUBTRANS_BUFFERS, 0);</span>
+<span class="lineNum">     188 </span>                :            : }
+<a name="189"><span class="lineNum">     189 </span>                :            : </a>
+<span class="lineNum">     190 </span>                :            : void
+<span class="lineNum">     191 </span>                :<span class="lineCov">      16534 : SUBTRANSShmemInit(void)</span>
+<span class="lineNum">     192 </span>                :            : {
+<span class="lineNum">     193 </span>                :<span class="lineCov">      16534 :     SubTransCtl-&gt;PagePrecedes = SubTransPagePrecedes;</span>
+<span class="lineNum">     194 </span>                :<span class="lineCov">      16534 :     SimpleLruInit(SubTransCtl, &quot;subtrans&quot;, NUM_SUBTRANS_BUFFERS, 0,</span>
+<span class="lineNum">     195 </span>                :<span class="lineCov">      16534 :                   SubtransControlLock, &quot;pg_subtrans&quot;,</span>
+<span class="lineNum">     196 </span>                :            :                   LWTRANCHE_SUBTRANS_BUFFERS);
+<span class="lineNum">     197 </span>                :            :     /* Override default assumption that writes should be fsync'd */
+<span class="lineNum">     198 </span>                :<span class="lineCov">      16534 :     SubTransCtl-&gt;do_fsync = false;</span>
+<span class="lineNum">     199 </span>                :            :     SlruPagePrecedesUnitTests(SubTransCtl, SUBTRANS_XACTS_PER_PAGE);
+<span class="lineNum">     200 </span>                :<span class="lineCov">      16534 : }</span>
+<span class="lineNum">     201 </span>                :            : 
+<span class="lineNum">     202 </span>                :            : /*
+<span class="lineNum">     203 </span>                :            :  * This func must be called ONCE on system install.  It creates
+<span class="lineNum">     204 </span>                :            :  * the initial SUBTRANS segment.  (The SUBTRANS directory is assumed to
+<span class="lineNum">     205 </span>                :            :  * have been created by the initdb shell script, and SUBTRANSShmemInit
+<span class="lineNum">     206 </span>                :            :  * must have been called already.)
+<span class="lineNum">     207 </span>                :            :  *
+<span class="lineNum">     208 </span>                :            :  * Note: it's not really necessary to create the initial segment now,
+<span class="lineNum">     209 </span>                :            :  * since slru.c would create it on first write anyway.  But we may as well
+<span class="lineNum">     210 </span>                :            :  * do it to be sure the directory is set up correctly.
+<a name="211"><span class="lineNum">     211 </span>                :            :  */</a>
+<span class="lineNum">     212 </span>                :            : void
+<span class="lineNum">     213 </span>                :<span class="lineNoCov">          0 : BootStrapSUBTRANS(void)</span>
+<span class="lineNum">     214 </span>                :            : {
+<span class="lineNum">     215 </span>                :            :     int         slotno;
+<span class="lineNum">     216 </span>                :            : 
+<span class="lineNum">     217 </span>                :<span class="lineNoCov">          0 :     LWLockAcquire(SubtransControlLock, LW_EXCLUSIVE);</span>
+<span class="lineNum">     218 </span>                :            : 
+<span class="lineNum">     219 </span>                :            :     /* Create and zero the first page of the subtrans log */
+<span class="lineNum">     220 </span>                :<span class="lineNoCov">          0 :     slotno = ZeroSUBTRANSPage(0);</span>
+<span class="lineNum">     221 </span>                :            : 
+<span class="lineNum">     222 </span>                :            :     /* Make sure it's written out */
+<span class="lineNum">     223 </span>                :<span class="lineNoCov">          0 :     SimpleLruWritePage(SubTransCtl, slotno);</span>
+<span class="lineNum">     224 </span>                :            :     Assert(!SubTransCtl-&gt;shared-&gt;page_dirty[slotno]);
+<span class="lineNum">     225 </span>                :            : 
+<span class="lineNum">     226 </span>                :<span class="lineNoCov">          0 :     LWLockRelease(SubtransControlLock);</span>
+<span class="lineNum">     227 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     228 </span>                :            : 
+<span class="lineNum">     229 </span>                :            : /*
+<span class="lineNum">     230 </span>                :            :  * Initialize (or reinitialize) a page of SUBTRANS to zeroes.
+<span class="lineNum">     231 </span>                :            :  *
+<span class="lineNum">     232 </span>                :            :  * The page is not actually written, just set up in shared memory.
+<span class="lineNum">     233 </span>                :            :  * The slot number of the new page is returned.
+<span class="lineNum">     234 </span>                :            :  *
+<span class="lineNum">     235 </span>                :            :  * Control lock must be held at entry, and will be held at exit.
+<a name="236"><span class="lineNum">     236 </span>                :            :  */</a>
+<span class="lineNum">     237 </span>                :            : static int
+<span class="lineNum">     238 </span>                :<span class="lineCov">         51 : ZeroSUBTRANSPage(int pageno)</span>
+<span class="lineNum">     239 </span>                :            : {
+<span class="lineNum">     240 </span>                :<span class="lineCov">         51 :     return SimpleLruZeroPage(SubTransCtl, pageno);</span>
+<span class="lineNum">     241 </span>                :            : }
+<span class="lineNum">     242 </span>                :            : 
+<span class="lineNum">     243 </span>                :            : /*
+<span class="lineNum">     244 </span>                :            :  * This must be called ONCE during postmaster or standalone-backend startup,
+<span class="lineNum">     245 </span>                :            :  * after StartupXLOG has initialized ShmemVariableCache-&gt;nextFullXid.
+<span class="lineNum">     246 </span>                :            :  *
+<span class="lineNum">     247 </span>                :            :  * oldestActiveXID is the oldest XID of any prepared transaction, or nextFullXid
+<span class="lineNum">     248 </span>                :            :  * if there are none.
+<a name="249"><span class="lineNum">     249 </span>                :            :  */</a>
+<span class="lineNum">     250 </span>                :            : void
+<span class="lineNum">     251 </span>                :<span class="lineCov">          1 : StartupSUBTRANS(TransactionId oldestActiveXID)</span>
+<span class="lineNum">     252 </span>                :            : {
+<span class="lineNum">     253 </span>                :            :     FullTransactionId nextFullXid;
+<span class="lineNum">     254 </span>                :            :     int         startPage;
+<span class="lineNum">     255 </span>                :            :     int         endPage;
+<span class="lineNum">     256 </span>                :            : 
+<span class="lineNum">     257 </span>                :            :     /*
+<span class="lineNum">     258 </span>                :            :      * Since we don't expect pg_subtrans to be valid across crashes, we
+<span class="lineNum">     259 </span>                :            :      * initialize the currently-active page(s) to zeroes during startup.
+<span class="lineNum">     260 </span>                :            :      * Whenever we advance into a new page, ExtendSUBTRANS will likewise zero
+<span class="lineNum">     261 </span>                :            :      * the new page without regard to whatever was previously on disk.
+<span class="lineNum">     262 </span>                :            :      */
+<span class="lineNum">     263 </span>                :<span class="lineCov">          1 :     LWLockAcquire(SubtransControlLock, LW_EXCLUSIVE);</span>
+<span class="lineNum">     264 </span>                :            : 
+<span class="lineNum">     265 </span>                :<span class="lineCov">          1 :     startPage = TransactionIdToPage(oldestActiveXID);</span>
+<span class="lineNum">     266 </span>                :<span class="lineCov">          1 :     nextFullXid = ShmemVariableCache-&gt;nextFullXid;</span>
+<span class="lineNum">     267 </span>                :<span class="lineCov">          1 :     endPage = TransactionIdToPage(XidFromFullTransactionId(nextFullXid));</span>
+<span class="lineNum">     268 </span>                :            : 
+<span class="lineNum">     269 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 1 time"> + </span>]:<span class="lineCov">          1 :     while (startPage != endPage)</span>
+<span class="lineNum">     270 </span>                :            :     {
+<span class="lineNum">     271 </span>                :<span class="lineNoCov">          0 :         (void) ZeroSUBTRANSPage(startPage);</span>
+<span class="lineNum">     272 </span>                :<span class="lineNoCov">          0 :         startPage++;</span>
+<span class="lineNum">     273 </span>                :            :         /* must account for wraparound */
+<span class="lineNum">     274 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (startPage &gt; TransactionIdToPage(MaxTransactionId))</span>
+<span class="lineNum">     275 </span>                :<span class="lineNoCov">          0 :             startPage = 0;</span>
+<span class="lineNum">     276 </span>                :            :     }
+<span class="lineNum">     277 </span>                :<span class="lineCov">          1 :     (void) ZeroSUBTRANSPage(startPage);</span>
+<span class="lineNum">     278 </span>                :            : 
+<span class="lineNum">     279 </span>                :<span class="lineCov">          1 :     LWLockRelease(SubtransControlLock);</span>
+<span class="lineNum">     280 </span>                :<span class="lineCov">          1 : }</span>
+<span class="lineNum">     281 </span>                :            : 
+<span class="lineNum">     282 </span>                :            : /*
+<span class="lineNum">     283 </span>                :            :  * This must be called ONCE during postmaster or standalone-backend shutdown
+<a name="284"><span class="lineNum">     284 </span>                :            :  */</a>
+<span class="lineNum">     285 </span>                :            : void
+<span class="lineNum">     286 </span>                :<span class="lineCov">          1 : ShutdownSUBTRANS(void)</span>
+<span class="lineNum">     287 </span>                :            : {
+<span class="lineNum">     288 </span>                :            :     /*
+<span class="lineNum">     289 </span>                :            :      * Flush dirty SUBTRANS pages to disk
+<span class="lineNum">     290 </span>                :            :      *
+<span class="lineNum">     291 </span>                :            :      * This is not actually necessary from a correctness point of view. We do
+<span class="lineNum">     292 </span>                :            :      * it merely as a debugging aid.
+<span class="lineNum">     293 </span>                :            :      */
+<span class="lineNum">     294 </span>                :<span class="lineCov">          1 :     TRACE_POSTGRESQL_SUBTRANS_CHECKPOINT_START(false);</span>
+<span class="lineNum">     295 </span>                :<span class="lineCov">          1 :     SimpleLruFlush(SubTransCtl, false);</span>
+<span class="lineNum">     296 </span>                :<span class="lineCov">          1 :     TRACE_POSTGRESQL_SUBTRANS_CHECKPOINT_DONE(false);</span>
+<span class="lineNum">     297 </span>                :<span class="lineCov">          1 : }</span>
+<span class="lineNum">     298 </span>                :            : 
+<span class="lineNum">     299 </span>                :            : /*
+<span class="lineNum">     300 </span>                :            :  * Perform a checkpoint --- either during shutdown, or on-the-fly
+<a name="301"><span class="lineNum">     301 </span>                :            :  */</a>
+<span class="lineNum">     302 </span>                :            : void
+<span class="lineNum">     303 </span>                :<span class="lineCov">        119 : CheckPointSUBTRANS(void)</span>
+<span class="lineNum">     304 </span>                :            : {
+<span class="lineNum">     305 </span>                :            :     /*
+<span class="lineNum">     306 </span>                :            :      * Flush dirty SUBTRANS pages to disk
+<span class="lineNum">     307 </span>                :            :      *
+<span class="lineNum">     308 </span>                :            :      * This is not actually necessary from a correctness point of view. We do
+<span class="lineNum">     309 </span>                :            :      * it merely to improve the odds that writing of dirty pages is done by
+<span class="lineNum">     310 </span>                :            :      * the checkpoint process and not by backends.
+<span class="lineNum">     311 </span>                :            :      */
+<span class="lineNum">     312 </span>                :<span class="lineCov">        119 :     TRACE_POSTGRESQL_SUBTRANS_CHECKPOINT_START(true);</span>
+<span class="lineNum">     313 </span>                :<span class="lineCov">        119 :     SimpleLruFlush(SubTransCtl, true);</span>
+<span class="lineNum">     314 </span>                :<span class="lineCov">        119 :     TRACE_POSTGRESQL_SUBTRANS_CHECKPOINT_DONE(true);</span>
+<span class="lineNum">     315 </span>                :<span class="lineCov">        119 : }</span>
+<span class="lineNum">     316 </span>                :            : 
+<span class="lineNum">     317 </span>                :            : 
+<span class="lineNum">     318 </span>                :            : /*
+<span class="lineNum">     319 </span>                :            :  * Make sure that SUBTRANS has room for a newly-allocated XID.
+<span class="lineNum">     320 </span>                :            :  *
+<span class="lineNum">     321 </span>                :            :  * NB: this is called while holding XidGenLock.  We want it to be very fast
+<span class="lineNum">     322 </span>                :            :  * most of the time; even when it's not so fast, no actual I/O need happen
+<span class="lineNum">     323 </span>                :            :  * unless we're forced to write out a dirty subtrans page to make room
+<span class="lineNum">     324 </span>                :            :  * in shared memory.
+<a name="325"><span class="lineNum">     325 </span>                :            :  */</a>
+<span class="lineNum">     326 </span>                :            : void
+<span class="lineNum">     327 </span>                :<span class="lineCov">     103072 : ExtendSUBTRANS(TransactionId newestXact)</span>
+<span class="lineNum">     328 </span>                :            : {
+<span class="lineNum">     329 </span>                :            :     int         pageno;
+<span class="lineNum">     330 </span>                :            : 
+<span class="lineNum">     331 </span>                :            :     /*
+<span class="lineNum">     332 </span>                :            :      * No work except at first XID of a page.  But beware: just after
+<span class="lineNum">     333 </span>                :            :      * wraparound, the first XID of page zero is FirstNormalTransactionId.
+<span class="lineNum">     334 </span>                :            :      */
+<span class="lineNum">     335 </span>[<span class="branchCov" title="Branch 0 was taken 103022 times"> + </span><span class="branchCov" title="Branch 1 was taken 50 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 103022 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">     103072 :     if (TransactionIdToEntry(newestXact) != 0 &amp;&amp;</span>
+<span class="lineNum">     336 </span>                :            :         !TransactionIdEquals(newestXact, FirstNormalTransactionId))
+<span class="lineNum">     337 </span>                :<span class="lineCov">     103022 :         return;</span>
+<span class="lineNum">     338 </span>                :            : 
+<span class="lineNum">     339 </span>                :<span class="lineCov">         50 :     pageno = TransactionIdToPage(newestXact);</span>
+<span class="lineNum">     340 </span>                :            : 
+<span class="lineNum">     341 </span>                :<span class="lineCov">         50 :     LWLockAcquire(SubtransControlLock, LW_EXCLUSIVE);</span>
+<span class="lineNum">     342 </span>                :            : 
+<span class="lineNum">     343 </span>                :            :     /* Zero the page */
+<span class="lineNum">     344 </span>                :<span class="lineCov">         50 :     ZeroSUBTRANSPage(pageno);</span>
+<span class="lineNum">     345 </span>                :            : 
+<span class="lineNum">     346 </span>                :<span class="lineCov">         50 :     LWLockRelease(SubtransControlLock);</span>
+<span class="lineNum">     347 </span>                :            : }
+<span class="lineNum">     348 </span>                :            : 
+<span class="lineNum">     349 </span>                :            : 
+<span class="lineNum">     350 </span>                :            : /*
+<span class="lineNum">     351 </span>                :            :  * Remove all SUBTRANS segments before the one holding the passed transaction ID
+<span class="lineNum">     352 </span>                :            :  *
+<span class="lineNum">     353 </span>                :            :  * oldestXact is the oldest TransactionXmin of any running transaction.  This
+<span class="lineNum">     354 </span>                :            :  * is called only during checkpoint.
+<a name="355"><span class="lineNum">     355 </span>                :            :  */</a>
+<span class="lineNum">     356 </span>                :            : void
+<span class="lineNum">     357 </span>                :<span class="lineCov">        119 : TruncateSUBTRANS(TransactionId oldestXact)</span>
+<span class="lineNum">     358 </span>                :            : {
+<span class="lineNum">     359 </span>                :            :     int         cutoffPage;
+<span class="lineNum">     360 </span>                :            : 
+<span class="lineNum">     361 </span>                :            :     /*
+<span class="lineNum">     362 </span>                :            :      * The cutoff point is the start of the segment containing oldestXact. We
+<span class="lineNum">     363 </span>                :            :      * pass the *page* containing oldestXact to SimpleLruTruncate.  We step
+<span class="lineNum">     364 </span>                :            :      * back one transaction to avoid passing a cutoff page that hasn't been
+<span class="lineNum">     365 </span>                :            :      * created yet in the rare case that oldestXact would be the first item on
+<span class="lineNum">     366 </span>                :            :      * a page and oldestXact == next XID.  In that case, if we didn't subtract
+<span class="lineNum">     367 </span>                :            :      * one, we'd trigger SimpleLruTruncate's wraparound detection.
+<span class="lineNum">     368 </span>                :            :      */
+<span class="lineNum">     369 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 119 times"> + </span>]:<span class="lineCov">        119 :     TransactionIdRetreat(oldestXact);</span>
+<span class="lineNum">     370 </span>                :<span class="lineCov">        119 :     cutoffPage = TransactionIdToPage(oldestXact);</span>
+<span class="lineNum">     371 </span>                :            : 
+<span class="lineNum">     372 </span>                :<span class="lineCov">        119 :     SimpleLruTruncate(SubTransCtl, cutoffPage);</span>
+<span class="lineNum">     373 </span>                :<span class="lineCov">        119 : }</span>
+<span class="lineNum">     374 </span>                :            : 
+<span class="lineNum">     375 </span>                :            : 
+<span class="lineNum">     376 </span>                :            : /*
+<span class="lineNum">     377 </span>                :            :  * Decide whether a SUBTRANS page number is &quot;older&quot; for truncation purposes.
+<span class="lineNum">     378 </span>                :            :  * Analogous to CLOGPagePrecedes().
+<a name="379"><span class="lineNum">     379 </span>                :            :  */</a>
+<span class="lineNum">     380 </span>                :            : static bool
+<span class="lineNum">     381 </span>                :<span class="lineCov">        526 : SubTransPagePrecedes(int page1, int page2)</span>
+<span class="lineNum">     382 </span>                :            : {
+<span class="lineNum">     383 </span>                :            :     TransactionId xid1;
+<span class="lineNum">     384 </span>                :            :     TransactionId xid2;
+<span class="lineNum">     385 </span>                :            : 
+<span class="lineNum">     386 </span>                :<span class="lineCov">        526 :     xid1 = ((TransactionId) page1) * SUBTRANS_XACTS_PER_PAGE;</span>
+<span class="lineNum">     387 </span>                :<span class="lineCov">        526 :     xid1 += FirstNormalTransactionId + 1;</span>
+<span class="lineNum">     388 </span>                :<span class="lineCov">        526 :     xid2 = ((TransactionId) page2) * SUBTRANS_XACTS_PER_PAGE;</span>
+<span class="lineNum">     389 </span>                :<span class="lineCov">        526 :     xid2 += FirstNormalTransactionId + 1;</span>
+<span class="lineNum">     390 </span>                :            : 
+<span class="lineNum">     391 </span>  [<span class="branchCov" title="Branch 1 was taken 167 times"> + </span><span class="branchCov" title="Branch 2 was taken 359 times"> + </span><span class="branchCov" title="Branch 3 was taken 167 times"> + </span><span class="branchNoCov" title="Branch 4 was not taken"> - </span>]:<span class="lineCov">        693 :     return (TransactionIdPrecedes(xid1, xid2) &amp;&amp;</span>
+<span class="lineNum">     392 </span>                :<span class="lineCov">        167 :             TransactionIdPrecedes(xid1, xid2 + SUBTRANS_XACTS_PER_PAGE - 1));</span>
+<span class="lineNum">     393 </span>                :            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,636 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/access/transam/generic_xlog.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/access/transam</a> - generic_xlog.c<span style="font-size: 80%;"> (source / <a href="generic_xlog.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">157</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:33:24</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">10</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">78</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">           Branch data     Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>                :            : /*-------------------------------------------------------------------------</a>
+<span class="lineNum">       2 </span>                :            :  *
+<span class="lineNum">       3 </span>                :            :  * generic_xlog.c
+<span class="lineNum">       4 </span>                :            :  *   Implementation of generic xlog records.
+<span class="lineNum">       5 </span>                :            :  *
+<span class="lineNum">       6 </span>                :            :  *
+<span class="lineNum">       7 </span>                :            :  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+<span class="lineNum">       8 </span>                :            :  * Portions Copyright (c) 1994, Regents of the University of California
+<span class="lineNum">       9 </span>                :            :  *
+<span class="lineNum">      10 </span>                :            :  * src/backend/access/transam/generic_xlog.c
+<span class="lineNum">      11 </span>                :            :  *
+<span class="lineNum">      12 </span>                :            :  *-------------------------------------------------------------------------
+<span class="lineNum">      13 </span>                :            :  */
+<span class="lineNum">      14 </span>                :            : #include &quot;postgres.h&quot;
+<span class="lineNum">      15 </span>                :            : 
+<span class="lineNum">      16 </span>                :            : #include &quot;access/bufmask.h&quot;
+<span class="lineNum">      17 </span>                :            : #include &quot;access/generic_xlog.h&quot;
+<span class="lineNum">      18 </span>                :            : #include &quot;access/xlogutils.h&quot;
+<span class="lineNum">      19 </span>                :            : #include &quot;miscadmin.h&quot;
+<span class="lineNum">      20 </span>                :            : #include &quot;utils/memutils.h&quot;
+<span class="lineNum">      21 </span>                :            : 
+<span class="lineNum">      22 </span>                :            : /*-------------------------------------------------------------------------
+<span class="lineNum">      23 </span>                :            :  * Internally, a delta between pages consists of a set of fragments.  Each
+<span class="lineNum">      24 </span>                :            :  * fragment represents changes made in a given region of a page.  A fragment
+<span class="lineNum">      25 </span>                :            :  * is made up as follows:
+<span class="lineNum">      26 </span>                :            :  *
+<span class="lineNum">      27 </span>                :            :  * - offset of page region (OffsetNumber)
+<span class="lineNum">      28 </span>                :            :  * - length of page region (OffsetNumber)
+<span class="lineNum">      29 </span>                :            :  * - data - the data to place into the region ('length' number of bytes)
+<span class="lineNum">      30 </span>                :            :  *
+<span class="lineNum">      31 </span>                :            :  * Unchanged regions of a page are not represented in its delta.  As a result,
+<span class="lineNum">      32 </span>                :            :  * a delta can be more compact than the full page image.  But having an
+<span class="lineNum">      33 </span>                :            :  * unchanged region between two fragments that is smaller than the fragment
+<span class="lineNum">      34 </span>                :            :  * header (offset+length) does not pay off in terms of the overall size of
+<span class="lineNum">      35 </span>                :            :  * the delta.  For this reason, we merge adjacent fragments if the unchanged
+<span class="lineNum">      36 </span>                :            :  * region between them is &lt;= MATCH_THRESHOLD bytes.
+<span class="lineNum">      37 </span>                :            :  *
+<span class="lineNum">      38 </span>                :            :  * We do not bother to merge fragments across the &quot;lower&quot; and &quot;upper&quot; parts
+<span class="lineNum">      39 </span>                :            :  * of a page; it's very seldom the case that pd_lower and pd_upper are within
+<span class="lineNum">      40 </span>                :            :  * MATCH_THRESHOLD bytes of each other, and handling that infrequent case
+<span class="lineNum">      41 </span>                :            :  * would complicate and slow down the delta-computation code unduly.
+<span class="lineNum">      42 </span>                :            :  * Therefore, the worst-case delta size includes two fragment headers plus
+<span class="lineNum">      43 </span>                :            :  * a full page's worth of data.
+<span class="lineNum">      44 </span>                :            :  *-------------------------------------------------------------------------
+<span class="lineNum">      45 </span>                :            :  */
+<span class="lineNum">      46 </span>                :            : #define FRAGMENT_HEADER_SIZE    (2 * sizeof(OffsetNumber))
+<span class="lineNum">      47 </span>                :            : #define MATCH_THRESHOLD         FRAGMENT_HEADER_SIZE
+<span class="lineNum">      48 </span>                :            : #define MAX_DELTA_SIZE          (BLCKSZ + 2 * FRAGMENT_HEADER_SIZE)
+<span class="lineNum">      49 </span>                :            : 
+<span class="lineNum">      50 </span>                :            : /* Struct of generic xlog data for single page */
+<span class="lineNum">      51 </span>                :            : typedef struct
+<span class="lineNum">      52 </span>                :            : {
+<span class="lineNum">      53 </span>                :            :     Buffer      buffer;         /* registered buffer */
+<span class="lineNum">      54 </span>                :            :     int         flags;          /* flags for this buffer */
+<span class="lineNum">      55 </span>                :            :     int         deltaLen;       /* space consumed in delta field */
+<span class="lineNum">      56 </span>                :            :     char       *image;          /* copy of page image for modification, do not
+<span class="lineNum">      57 </span>                :            :                                  * do it in-place to have aligned memory chunk */
+<span class="lineNum">      58 </span>                :            :     char        delta[MAX_DELTA_SIZE];  /* delta between page images */
+<span class="lineNum">      59 </span>                :            : } PageData;
+<span class="lineNum">      60 </span>                :            : 
+<span class="lineNum">      61 </span>                :            : /* State of generic xlog record construction */
+<span class="lineNum">      62 </span>                :            : struct GenericXLogState
+<span class="lineNum">      63 </span>                :            : {
+<span class="lineNum">      64 </span>                :            :     /* Info about each page, see above */
+<span class="lineNum">      65 </span>                :            :     PageData    pages[MAX_GENERIC_XLOG_PAGES];
+<span class="lineNum">      66 </span>                :            :     bool        isLogged;
+<span class="lineNum">      67 </span>                :            :     /* Page images (properly aligned) */
+<span class="lineNum">      68 </span>                :            :     PGAlignedBlock images[MAX_GENERIC_XLOG_PAGES];
+<span class="lineNum">      69 </span>                :            : };
+<span class="lineNum">      70 </span>                :            : 
+<span class="lineNum">      71 </span>                :            : static void writeFragment(PageData *pageData, OffsetNumber offset,
+<span class="lineNum">      72 </span>                :            :                           OffsetNumber len, const char *data);
+<span class="lineNum">      73 </span>                :            : static void computeRegionDelta(PageData *pageData,
+<span class="lineNum">      74 </span>                :            :                                const char *curpage, const char *targetpage,
+<span class="lineNum">      75 </span>                :            :                                int targetStart, int targetEnd,
+<span class="lineNum">      76 </span>                :            :                                int validStart, int validEnd);
+<span class="lineNum">      77 </span>                :            : static void computeDelta(PageData *pageData, Page curpage, Page targetpage);
+<span class="lineNum">      78 </span>                :            : static void applyPageRedo(Page page, const char *delta, Size deltaSize);
+<span class="lineNum">      79 </span>                :            : 
+<span class="lineNum">      80 </span>                :            : 
+<span class="lineNum">      81 </span>                :            : /*
+<span class="lineNum">      82 </span>                :            :  * Write next fragment into pageData's delta.
+<span class="lineNum">      83 </span>                :            :  *
+<span class="lineNum">      84 </span>                :            :  * The fragment has the given offset and length, and data points to the
+<span class="lineNum">      85 </span>                :            :  * actual data (of length length).
+<a name="86"><span class="lineNum">      86 </span>                :            :  */</a>
+<span class="lineNum">      87 </span>                :            : static void
+<span class="lineNum">      88 </span>                :<span class="lineNoCov">          0 : writeFragment(PageData *pageData, OffsetNumber offset, OffsetNumber length,</span>
+<span class="lineNum">      89 </span>                :            :               const char *data)
+<span class="lineNum">      90 </span>                :            : {
+<span class="lineNum">      91 </span>                :<span class="lineNoCov">          0 :     char       *ptr = pageData-&gt;delta + pageData-&gt;deltaLen;</span>
+<span class="lineNum">      92 </span>                :            : 
+<span class="lineNum">      93 </span>                :            :     /* Verify we have enough space */
+<span class="lineNum">      94 </span>                :            :     Assert(pageData-&gt;deltaLen + sizeof(offset) +
+<span class="lineNum">      95 </span>                :            :            sizeof(length) + length &lt;= sizeof(pageData-&gt;delta));
+<span class="lineNum">      96 </span>                :            : 
+<span class="lineNum">      97 </span>                :            :     /* Write fragment data */
+<span class="lineNum">      98 </span>                :<span class="lineNoCov">          0 :     memcpy(ptr, &amp;offset, sizeof(offset));</span>
+<span class="lineNum">      99 </span>                :<span class="lineNoCov">          0 :     ptr += sizeof(offset);</span>
+<span class="lineNum">     100 </span>                :<span class="lineNoCov">          0 :     memcpy(ptr, &amp;length, sizeof(length));</span>
+<span class="lineNum">     101 </span>                :<span class="lineNoCov">          0 :     ptr += sizeof(length);</span>
+<span class="lineNum">     102 </span>                :<span class="lineNoCov">          0 :     memcpy(ptr, data, length);</span>
+<span class="lineNum">     103 </span>                :<span class="lineNoCov">          0 :     ptr += length;</span>
+<span class="lineNum">     104 </span>                :            : 
+<span class="lineNum">     105 </span>                :<span class="lineNoCov">          0 :     pageData-&gt;deltaLen = ptr - pageData-&gt;delta;</span>
+<span class="lineNum">     106 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     107 </span>                :            : 
+<span class="lineNum">     108 </span>                :            : /*
+<span class="lineNum">     109 </span>                :            :  * Compute the XLOG fragments needed to transform a region of curpage into the
+<span class="lineNum">     110 </span>                :            :  * corresponding region of targetpage, and append them to pageData's delta
+<span class="lineNum">     111 </span>                :            :  * field.  The region to transform runs from targetStart to targetEnd-1.
+<span class="lineNum">     112 </span>                :            :  * Bytes in curpage outside the range validStart to validEnd-1 should be
+<span class="lineNum">     113 </span>                :            :  * considered invalid, and always overwritten with target data.
+<span class="lineNum">     114 </span>                :            :  *
+<span class="lineNum">     115 </span>                :            :  * This function is a hot spot, so it's worth being as tense as possible
+<span class="lineNum">     116 </span>                :            :  * about the data-matching loops.
+<a name="117"><span class="lineNum">     117 </span>                :            :  */</a>
+<span class="lineNum">     118 </span>                :            : static void
+<span class="lineNum">     119 </span>                :<span class="lineNoCov">          0 : computeRegionDelta(PageData *pageData,</span>
+<span class="lineNum">     120 </span>                :            :                    const char *curpage, const char *targetpage,
+<span class="lineNum">     121 </span>                :            :                    int targetStart, int targetEnd,
+<span class="lineNum">     122 </span>                :            :                    int validStart, int validEnd)
+<span class="lineNum">     123 </span>                :            : {
+<span class="lineNum">     124 </span>                :            :     int         i,
+<span class="lineNum">     125 </span>                :            :                 loopEnd,
+<span class="lineNum">     126 </span>                :<span class="lineNoCov">          0 :                 fragmentBegin = -1,</span>
+<span class="lineNum">     127 </span>                :<span class="lineNoCov">          0 :                 fragmentEnd = -1;</span>
+<span class="lineNum">     128 </span>                :            : 
+<span class="lineNum">     129 </span>                :            :     /* Deal with any invalid start region by including it in first fragment */
+<span class="lineNum">     130 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (validStart &gt; targetStart)</span>
+<span class="lineNum">     131 </span>                :            :     {
+<span class="lineNum">     132 </span>                :<span class="lineNoCov">          0 :         fragmentBegin = targetStart;</span>
+<span class="lineNum">     133 </span>                :<span class="lineNoCov">          0 :         targetStart = validStart;</span>
+<span class="lineNum">     134 </span>                :            :     }
+<span class="lineNum">     135 </span>                :            : 
+<span class="lineNum">     136 </span>                :            :     /* We'll deal with any invalid end region after the main loop */
+<span class="lineNum">     137 </span>                :<span class="lineNoCov">          0 :     loopEnd = Min(targetEnd, validEnd);</span>
+<span class="lineNum">     138 </span>                :            : 
+<span class="lineNum">     139 </span>                :            :     /* Examine all the potentially matchable bytes */
+<span class="lineNum">     140 </span>                :<span class="lineNoCov">          0 :     i = targetStart;</span>
+<span class="lineNum">     141 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     while (i &lt; loopEnd)</span>
+<span class="lineNum">     142 </span>                :            :     {
+<span class="lineNum">     143 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (curpage[i] != targetpage[i])</span>
+<span class="lineNum">     144 </span>                :            :         {
+<span class="lineNum">     145 </span>                :            :             /* On unmatched byte, start new fragment if not already in one */
+<span class="lineNum">     146 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (fragmentBegin &lt; 0)</span>
+<span class="lineNum">     147 </span>                :<span class="lineNoCov">          0 :                 fragmentBegin = i;</span>
+<span class="lineNum">     148 </span>                :            :             /* Mark unmatched-data endpoint as uncertain */
+<span class="lineNum">     149 </span>                :<span class="lineNoCov">          0 :             fragmentEnd = -1;</span>
+<span class="lineNum">     150 </span>                :            :             /* Extend the fragment as far as possible in a tight loop */
+<span class="lineNum">     151 </span>                :<span class="lineNoCov">          0 :             i++;</span>
+<span class="lineNum">     152 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :             while (i &lt; loopEnd &amp;&amp; curpage[i] != targetpage[i])</span>
+<span class="lineNum">     153 </span>                :<span class="lineNoCov">          0 :                 i++;</span>
+<span class="lineNum">     154 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (i &gt;= loopEnd)</span>
+<span class="lineNum">     155 </span>                :<span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     156 </span>                :            :         }
+<span class="lineNum">     157 </span>                :            : 
+<span class="lineNum">     158 </span>                :            :         /* Found a matched byte, so remember end of unmatched fragment */
+<span class="lineNum">     159 </span>                :<span class="lineNoCov">          0 :         fragmentEnd = i;</span>
+<span class="lineNum">     160 </span>                :            : 
+<span class="lineNum">     161 </span>                :            :         /*
+<span class="lineNum">     162 </span>                :            :          * Extend the match as far as possible in a tight loop.  (On typical
+<span class="lineNum">     163 </span>                :            :          * workloads, this inner loop is the bulk of this function's runtime.)
+<span class="lineNum">     164 </span>                :            :          */
+<span class="lineNum">     165 </span>                :<span class="lineNoCov">          0 :         i++;</span>
+<span class="lineNum">     166 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         while (i &lt; loopEnd &amp;&amp; curpage[i] == targetpage[i])</span>
+<span class="lineNum">     167 </span>                :<span class="lineNoCov">          0 :             i++;</span>
+<span class="lineNum">     168 </span>                :            : 
+<span class="lineNum">     169 </span>                :            :         /*
+<span class="lineNum">     170 </span>                :            :          * There are several possible cases at this point:
+<span class="lineNum">     171 </span>                :            :          *
+<span class="lineNum">     172 </span>                :            :          * 1. We have no unwritten fragment (fragmentBegin &lt; 0).  There's
+<span class="lineNum">     173 </span>                :            :          * nothing to write; and it doesn't matter what fragmentEnd is.
+<span class="lineNum">     174 </span>                :            :          *
+<span class="lineNum">     175 </span>                :            :          * 2. We found more than MATCH_THRESHOLD consecutive matching bytes.
+<span class="lineNum">     176 </span>                :            :          * Dump out the unwritten fragment, stopping at fragmentEnd.
+<span class="lineNum">     177 </span>                :            :          *
+<span class="lineNum">     178 </span>                :            :          * 3. The match extends to loopEnd.  We'll do nothing here, exit the
+<span class="lineNum">     179 </span>                :            :          * loop, and then dump the unwritten fragment, after merging it with
+<span class="lineNum">     180 </span>                :            :          * the invalid end region if any.  If we don't so merge, fragmentEnd
+<span class="lineNum">     181 </span>                :            :          * establishes how much the final writeFragment call needs to write.
+<span class="lineNum">     182 </span>                :            :          *
+<span class="lineNum">     183 </span>                :            :          * 4. We found an unmatched byte before loopEnd.  The loop will repeat
+<span class="lineNum">     184 </span>                :            :          * and will enter the unmatched-byte stanza above.  So in this case
+<span class="lineNum">     185 </span>                :            :          * also, it doesn't matter what fragmentEnd is.  The matched bytes
+<span class="lineNum">     186 </span>                :            :          * will get merged into the continuing unmatched fragment.
+<span class="lineNum">     187 </span>                :            :          *
+<span class="lineNum">     188 </span>                :            :          * Only in case 3 do we reach the bottom of the loop with a meaningful
+<span class="lineNum">     189 </span>                :            :          * fragmentEnd value, which is why it's OK that we unconditionally
+<span class="lineNum">     190 </span>                :            :          * assign &quot;fragmentEnd = i&quot; above.
+<span class="lineNum">     191 </span>                :            :          */
+<span class="lineNum">     192 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (fragmentBegin &gt;= 0 &amp;&amp; i - fragmentEnd &gt; MATCH_THRESHOLD)</span>
+<span class="lineNum">     193 </span>                :            :         {
+<span class="lineNum">     194 </span>                :<span class="lineNoCov">          0 :             writeFragment(pageData, fragmentBegin,</span>
+<span class="lineNum">     195 </span>                :            :                           fragmentEnd - fragmentBegin,
+<span class="lineNum">     196 </span>                :            :                           targetpage + fragmentBegin);
+<span class="lineNum">     197 </span>                :<span class="lineNoCov">          0 :             fragmentBegin = -1;</span>
+<span class="lineNum">     198 </span>                :<span class="lineNoCov">          0 :             fragmentEnd = -1;   /* not really necessary */</span>
+<span class="lineNum">     199 </span>                :            :         }
+<span class="lineNum">     200 </span>                :            :     }
+<span class="lineNum">     201 </span>                :            : 
+<span class="lineNum">     202 </span>                :            :     /* Deal with any invalid end region by including it in final fragment */
+<span class="lineNum">     203 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (loopEnd &lt; targetEnd)</span>
+<span class="lineNum">     204 </span>                :            :     {
+<span class="lineNum">     205 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (fragmentBegin &lt; 0)</span>
+<span class="lineNum">     206 </span>                :<span class="lineNoCov">          0 :             fragmentBegin = loopEnd;</span>
+<span class="lineNum">     207 </span>                :<span class="lineNoCov">          0 :         fragmentEnd = targetEnd;</span>
+<span class="lineNum">     208 </span>                :            :     }
+<span class="lineNum">     209 </span>                :            : 
+<span class="lineNum">     210 </span>                :            :     /* Write final fragment if any */
+<span class="lineNum">     211 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (fragmentBegin &gt;= 0)</span>
+<span class="lineNum">     212 </span>                :            :     {
+<span class="lineNum">     213 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (fragmentEnd &lt; 0)</span>
+<span class="lineNum">     214 </span>                :<span class="lineNoCov">          0 :             fragmentEnd = targetEnd;</span>
+<span class="lineNum">     215 </span>                :<span class="lineNoCov">          0 :         writeFragment(pageData, fragmentBegin,</span>
+<span class="lineNum">     216 </span>                :            :                       fragmentEnd - fragmentBegin,
+<span class="lineNum">     217 </span>                :            :                       targetpage + fragmentBegin);
+<span class="lineNum">     218 </span>                :            :     }
+<span class="lineNum">     219 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     220 </span>                :            : 
+<span class="lineNum">     221 </span>                :            : /*
+<span class="lineNum">     222 </span>                :            :  * Compute the XLOG delta record needed to transform curpage into targetpage,
+<span class="lineNum">     223 </span>                :            :  * and store it in pageData's delta field.
+<a name="224"><span class="lineNum">     224 </span>                :            :  */</a>
+<span class="lineNum">     225 </span>                :            : static void
+<span class="lineNum">     226 </span>                :<span class="lineNoCov">          0 : computeDelta(PageData *pageData, Page curpage, Page targetpage)</span>
+<span class="lineNum">     227 </span>                :            : {
+<span class="lineNum">     228 </span>                :<span class="lineNoCov">          0 :     int         targetLower = ((PageHeader) targetpage)-&gt;pd_lower,</span>
+<span class="lineNum">     229 </span>                :<span class="lineNoCov">          0 :                 targetUpper = ((PageHeader) targetpage)-&gt;pd_upper,</span>
+<span class="lineNum">     230 </span>                :<span class="lineNoCov">          0 :                 curLower = ((PageHeader) curpage)-&gt;pd_lower,</span>
+<span class="lineNum">     231 </span>                :<span class="lineNoCov">          0 :                 curUpper = ((PageHeader) curpage)-&gt;pd_upper;</span>
+<span class="lineNum">     232 </span>                :            : 
+<span class="lineNum">     233 </span>                :<span class="lineNoCov">          0 :     pageData-&gt;deltaLen = 0;</span>
+<span class="lineNum">     234 </span>                :            : 
+<span class="lineNum">     235 </span>                :            :     /* Compute delta records for lower part of page ... */
+<span class="lineNum">     236 </span>                :<span class="lineNoCov">          0 :     computeRegionDelta(pageData, curpage, targetpage,</span>
+<span class="lineNum">     237 </span>                :            :                        0, targetLower,
+<span class="lineNum">     238 </span>                :            :                        0, curLower);
+<span class="lineNum">     239 </span>                :            :     /* ... and for upper part, ignoring what's between */
+<span class="lineNum">     240 </span>                :<span class="lineNoCov">          0 :     computeRegionDelta(pageData, curpage, targetpage,</span>
+<span class="lineNum">     241 </span>                :            :                        targetUpper, BLCKSZ,
+<span class="lineNum">     242 </span>                :            :                        curUpper, BLCKSZ);
+<span class="lineNum">     243 </span>                :            : 
+<span class="lineNum">     244 </span>                :            :     /*
+<span class="lineNum">     245 </span>                :            :      * If xlog debug is enabled, then check produced delta.  Result of delta
+<span class="lineNum">     246 </span>                :            :      * application to curpage should be equivalent to targetpage.
+<span class="lineNum">     247 </span>                :            :      */
+<span class="lineNum">     248 </span>                :            : #ifdef WAL_DEBUG
+<span class="lineNum">     249 </span>                :            :     if (XLOG_DEBUG)
+<span class="lineNum">     250 </span>                :            :     {
+<span class="lineNum">     251 </span>                :            :         PGAlignedBlock tmp;
+<span class="lineNum">     252 </span>                :            : 
+<span class="lineNum">     253 </span>                :            :         memcpy(tmp.data, curpage, BLCKSZ);
+<span class="lineNum">     254 </span>                :            :         applyPageRedo(tmp.data, pageData-&gt;delta, pageData-&gt;deltaLen);
+<span class="lineNum">     255 </span>                :            :         if (memcmp(tmp.data, targetpage, targetLower) != 0 ||
+<span class="lineNum">     256 </span>                :            :             memcmp(tmp.data + targetUpper, targetpage + targetUpper,
+<span class="lineNum">     257 </span>                :            :                    BLCKSZ - targetUpper) != 0)
+<span class="lineNum">     258 </span>                :            :             elog(ERROR, &quot;result of generic xlog apply does not match&quot;);
+<span class="lineNum">     259 </span>                :            :     }
+<span class="lineNum">     260 </span>                :            : #endif
+<span class="lineNum">     261 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     262 </span>                :            : 
+<span class="lineNum">     263 </span>                :            : /*
+<span class="lineNum">     264 </span>                :            :  * Start new generic xlog record for modifications to specified relation.
+<a name="265"><span class="lineNum">     265 </span>                :            :  */</a>
+<span class="lineNum">     266 </span>                :            : GenericXLogState *
+<span class="lineNum">     267 </span>                :<span class="lineNoCov">          0 : GenericXLogStart(Relation relation)</span>
+<span class="lineNum">     268 </span>                :            : {
+<span class="lineNum">     269 </span>                :            :     GenericXLogState *state;
+<span class="lineNum">     270 </span>                :            :     int         i;
+<span class="lineNum">     271 </span>                :            : 
+<span class="lineNum">     272 </span>                :<span class="lineNoCov">          0 :     state = (GenericXLogState *) palloc(sizeof(GenericXLogState));</span>
+<span class="lineNum">     273 </span>                :<span class="lineNoCov">          0 :     state-&gt;isLogged = RelationNeedsWAL(relation);</span>
+<span class="lineNum">     274 </span>                :            : 
+<span class="lineNum">     275 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     for (i = 0; i &lt; MAX_GENERIC_XLOG_PAGES; i++)</span>
+<span class="lineNum">     276 </span>                :            :     {
+<span class="lineNum">     277 </span>                :<span class="lineNoCov">          0 :         state-&gt;pages[i].image = state-&gt;images[i].data;</span>
+<span class="lineNum">     278 </span>                :<span class="lineNoCov">          0 :         state-&gt;pages[i].buffer = InvalidBuffer;</span>
+<span class="lineNum">     279 </span>                :            :     }
+<span class="lineNum">     280 </span>                :            : 
+<span class="lineNum">     281 </span>                :<span class="lineNoCov">          0 :     return state;</span>
+<span class="lineNum">     282 </span>                :            : }
+<span class="lineNum">     283 </span>                :            : 
+<span class="lineNum">     284 </span>                :            : /*
+<span class="lineNum">     285 </span>                :            :  * Register new buffer for generic xlog record.
+<span class="lineNum">     286 </span>                :            :  *
+<span class="lineNum">     287 </span>                :            :  * Returns pointer to the page's image in the GenericXLogState, which
+<span class="lineNum">     288 </span>                :            :  * is what the caller should modify.
+<span class="lineNum">     289 </span>                :            :  *
+<span class="lineNum">     290 </span>                :            :  * If the buffer is already registered, just return its existing entry.
+<span class="lineNum">     291 </span>                :            :  * (It's not very clear what to do with the flags in such a case, but
+<span class="lineNum">     292 </span>                :            :  * for now we stay with the original flags.)
+<a name="293"><span class="lineNum">     293 </span>                :            :  */</a>
+<span class="lineNum">     294 </span>                :            : Page
+<span class="lineNum">     295 </span>                :<span class="lineNoCov">          0 : GenericXLogRegisterBuffer(GenericXLogState *state, Buffer buffer, int flags)</span>
+<span class="lineNum">     296 </span>                :            : {
+<span class="lineNum">     297 </span>                :            :     int         block_id;
+<span class="lineNum">     298 </span>                :            : 
+<span class="lineNum">     299 </span>                :            :     /* Search array for existing entry or first unused slot */
+<span class="lineNum">     300 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     for (block_id = 0; block_id &lt; MAX_GENERIC_XLOG_PAGES; block_id++)</span>
+<span class="lineNum">     301 </span>                :            :     {
+<span class="lineNum">     302 </span>                :<span class="lineNoCov">          0 :         PageData   *page = &amp;state-&gt;pages[block_id];</span>
+<span class="lineNum">     303 </span>                :            : 
+<span class="lineNum">     304 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (BufferIsInvalid(page-&gt;buffer))</span>
+<span class="lineNum">     305 </span>                :            :         {
+<span class="lineNum">     306 </span>                :            :             /* Empty slot, so use it (there cannot be a match later) */
+<span class="lineNum">     307 </span>                :<span class="lineNoCov">          0 :             page-&gt;buffer = buffer;</span>
+<span class="lineNum">     308 </span>                :<span class="lineNoCov">          0 :             page-&gt;flags = flags;</span>
+<span class="lineNum">     309 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             memcpy(page-&gt;image, BufferGetPage(buffer), BLCKSZ);</span>
+<span class="lineNum">     310 </span>                :<span class="lineNoCov">          0 :             return (Page) page-&gt;image;</span>
+<span class="lineNum">     311 </span>                :            :         }
+<span class="lineNum">     312 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         else if (page-&gt;buffer == buffer)</span>
+<span class="lineNum">     313 </span>                :            :         {
+<span class="lineNum">     314 </span>                :            :             /*
+<span class="lineNum">     315 </span>                :            :              * Buffer is already registered.  Just return the image, which is
+<span class="lineNum">     316 </span>                :            :              * already prepared.
+<span class="lineNum">     317 </span>                :            :              */
+<span class="lineNum">     318 </span>                :<span class="lineNoCov">          0 :             return (Page) page-&gt;image;</span>
+<span class="lineNum">     319 </span>                :            :         }
+<span class="lineNum">     320 </span>                :            :     }
+<span class="lineNum">     321 </span>                :            : 
+<span class="lineNum">     322 </span>                :<span class="lineNoCov">          0 :     elog(ERROR, &quot;maximum number %d of generic xlog buffers is exceeded&quot;,</span>
+<span class="lineNum">     323 </span>                :            :          MAX_GENERIC_XLOG_PAGES);
+<span class="lineNum">     324 </span>                :            :     /* keep compiler quiet */
+<span class="lineNum">     325 </span>                :            :     return NULL;
+<span class="lineNum">     326 </span>                :            : }
+<span class="lineNum">     327 </span>                :            : 
+<span class="lineNum">     328 </span>                :            : /*
+<span class="lineNum">     329 </span>                :            :  * Apply changes represented by GenericXLogState to the actual buffers,
+<span class="lineNum">     330 </span>                :            :  * and emit a generic xlog record.
+<a name="331"><span class="lineNum">     331 </span>                :            :  */</a>
+<span class="lineNum">     332 </span>                :            : XLogRecPtr
+<span class="lineNum">     333 </span>                :<span class="lineNoCov">          0 : GenericXLogFinish(GenericXLogState *state)</span>
+<span class="lineNum">     334 </span>                :            : {
+<span class="lineNum">     335 </span>                :            :     XLogRecPtr  lsn;
+<span class="lineNum">     336 </span>                :            :     int         i;
+<span class="lineNum">     337 </span>                :            : 
+<span class="lineNum">     338 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (state-&gt;isLogged)</span>
+<span class="lineNum">     339 </span>                :            :     {
+<span class="lineNum">     340 </span>                :            :         /* Logged relation: make xlog record in critical section. */
+<span class="lineNum">     341 </span>                :<span class="lineNoCov">          0 :         XLogBeginInsert();</span>
+<span class="lineNum">     342 </span>                :            : 
+<span class="lineNum">     343 </span>                :<span class="lineNoCov">          0 :         START_CRIT_SECTION();</span>
+<span class="lineNum">     344 </span>                :            : 
+<span class="lineNum">     345 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         for (i = 0; i &lt; MAX_GENERIC_XLOG_PAGES; i++)</span>
+<span class="lineNum">     346 </span>                :            :         {
+<span class="lineNum">     347 </span>                :<span class="lineNoCov">          0 :             PageData   *pageData = &amp;state-&gt;pages[i];</span>
+<span class="lineNum">     348 </span>                :            :             Page        page;
+<span class="lineNum">     349 </span>                :            :             PageHeader  pageHeader;
+<span class="lineNum">     350 </span>                :            : 
+<span class="lineNum">     351 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (BufferIsInvalid(pageData-&gt;buffer))</span>
+<span class="lineNum">     352 </span>                :<span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     353 </span>                :            : 
+<span class="lineNum">     354 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             page = BufferGetPage(pageData-&gt;buffer);</span>
+<span class="lineNum">     355 </span>                :<span class="lineNoCov">          0 :             pageHeader = (PageHeader) pageData-&gt;image;</span>
+<span class="lineNum">     356 </span>                :            : 
+<span class="lineNum">     357 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (pageData-&gt;flags &amp; GENERIC_XLOG_FULL_IMAGE)</span>
+<span class="lineNum">     358 </span>                :            :             {
+<span class="lineNum">     359 </span>                :            :                 /*
+<span class="lineNum">     360 </span>                :            :                  * A full-page image does not require us to supply any xlog
+<span class="lineNum">     361 </span>                :            :                  * data.  Just apply the image, being careful to zero the
+<span class="lineNum">     362 </span>                :            :                  * &quot;hole&quot; between pd_lower and pd_upper in order to avoid
+<span class="lineNum">     363 </span>                :            :                  * divergence between actual page state and what replay would
+<span class="lineNum">     364 </span>                :            :                  * produce.
+<span class="lineNum">     365 </span>                :            :                  */
+<span class="lineNum">     366 </span>                :<span class="lineNoCov">          0 :                 memcpy(page, pageData-&gt;image, pageHeader-&gt;pd_lower);</span>
+<span class="lineNum">     367 </span>                :<span class="lineNoCov">          0 :                 memset(page + pageHeader-&gt;pd_lower, 0,</span>
+<span class="lineNum">     368 </span>                :<span class="lineNoCov">          0 :                        pageHeader-&gt;pd_upper - pageHeader-&gt;pd_lower);</span>
+<span class="lineNum">     369 </span>                :<span class="lineNoCov">          0 :                 memcpy(page + pageHeader-&gt;pd_upper,</span>
+<span class="lineNum">     370 </span>                :<span class="lineNoCov">          0 :                        pageData-&gt;image + pageHeader-&gt;pd_upper,</span>
+<span class="lineNum">     371 </span>                :<span class="lineNoCov">          0 :                        BLCKSZ - pageHeader-&gt;pd_upper);</span>
+<span class="lineNum">     372 </span>                :            : 
+<span class="lineNum">     373 </span>                :<span class="lineNoCov">          0 :                 XLogRegisterBuffer(i, pageData-&gt;buffer,</span>
+<span class="lineNum">     374 </span>                :            :                                    REGBUF_FORCE_IMAGE | REGBUF_STANDARD);
+<span class="lineNum">     375 </span>                :            :             }
+<span class="lineNum">     376 </span>                :            :             else
+<span class="lineNum">     377 </span>                :            :             {
+<span class="lineNum">     378 </span>                :            :                 /*
+<span class="lineNum">     379 </span>                :            :                  * In normal mode, calculate delta and write it as xlog data
+<span class="lineNum">     380 </span>                :            :                  * associated with this page.
+<span class="lineNum">     381 </span>                :            :                  */
+<span class="lineNum">     382 </span>                :<span class="lineNoCov">          0 :                 computeDelta(pageData, page, (Page) pageData-&gt;image);</span>
+<span class="lineNum">     383 </span>                :            : 
+<span class="lineNum">     384 </span>                :            :                 /* Apply the image, with zeroed &quot;hole&quot; as above */
+<span class="lineNum">     385 </span>                :<span class="lineNoCov">          0 :                 memcpy(page, pageData-&gt;image, pageHeader-&gt;pd_lower);</span>
+<span class="lineNum">     386 </span>                :<span class="lineNoCov">          0 :                 memset(page + pageHeader-&gt;pd_lower, 0,</span>
+<span class="lineNum">     387 </span>                :<span class="lineNoCov">          0 :                        pageHeader-&gt;pd_upper - pageHeader-&gt;pd_lower);</span>
+<span class="lineNum">     388 </span>                :<span class="lineNoCov">          0 :                 memcpy(page + pageHeader-&gt;pd_upper,</span>
+<span class="lineNum">     389 </span>                :<span class="lineNoCov">          0 :                        pageData-&gt;image + pageHeader-&gt;pd_upper,</span>
+<span class="lineNum">     390 </span>                :<span class="lineNoCov">          0 :                        BLCKSZ - pageHeader-&gt;pd_upper);</span>
+<span class="lineNum">     391 </span>                :            : 
+<span class="lineNum">     392 </span>                :<span class="lineNoCov">          0 :                 XLogRegisterBuffer(i, pageData-&gt;buffer, REGBUF_STANDARD);</span>
+<span class="lineNum">     393 </span>                :<span class="lineNoCov">          0 :                 XLogRegisterBufData(i, pageData-&gt;delta, pageData-&gt;deltaLen);</span>
+<span class="lineNum">     394 </span>                :            :             }
+<span class="lineNum">     395 </span>                :            :         }
+<span class="lineNum">     396 </span>                :            : 
+<span class="lineNum">     397 </span>                :            :         /* Insert xlog record */
+<span class="lineNum">     398 </span>                :<span class="lineNoCov">          0 :         lsn = XLogInsert(RM_GENERIC_ID, 0);</span>
+<span class="lineNum">     399 </span>                :            : 
+<span class="lineNum">     400 </span>                :            :         /* Set LSN and mark buffers dirty */
+<span class="lineNum">     401 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         for (i = 0; i &lt; MAX_GENERIC_XLOG_PAGES; i++)</span>
+<span class="lineNum">     402 </span>                :            :         {
+<span class="lineNum">     403 </span>                :<span class="lineNoCov">          0 :             PageData   *pageData = &amp;state-&gt;pages[i];</span>
+<span class="lineNum">     404 </span>                :            : 
+<span class="lineNum">     405 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (BufferIsInvalid(pageData-&gt;buffer))</span>
+<span class="lineNum">     406 </span>                :<span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     407 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :             PageSetLSN(BufferGetPage(pageData-&gt;buffer), lsn);</span>
+<span class="lineNum">     408 </span>                :<span class="lineNoCov">          0 :             MarkBufferDirty(pageData-&gt;buffer);</span>
+<span class="lineNum">     409 </span>                :            :         }
+<span class="lineNum">     410 </span>                :<span class="lineNoCov">          0 :         END_CRIT_SECTION();</span>
+<span class="lineNum">     411 </span>                :            :     }
+<span class="lineNum">     412 </span>                :            :     else
+<span class="lineNum">     413 </span>                :            :     {
+<span class="lineNum">     414 </span>                :            :         /* Unlogged relation: skip xlog-related stuff */
+<span class="lineNum">     415 </span>                :<span class="lineNoCov">          0 :         START_CRIT_SECTION();</span>
+<span class="lineNum">     416 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         for (i = 0; i &lt; MAX_GENERIC_XLOG_PAGES; i++)</span>
+<span class="lineNum">     417 </span>                :            :         {
+<span class="lineNum">     418 </span>                :<span class="lineNoCov">          0 :             PageData   *pageData = &amp;state-&gt;pages[i];</span>
+<span class="lineNum">     419 </span>                :            : 
+<span class="lineNum">     420 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (BufferIsInvalid(pageData-&gt;buffer))</span>
+<span class="lineNum">     421 </span>                :<span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     422 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             memcpy(BufferGetPage(pageData-&gt;buffer),</span>
+<span class="lineNum">     423 </span>                :<span class="lineNoCov">          0 :                    pageData-&gt;image,</span>
+<span class="lineNum">     424 </span>                :            :                    BLCKSZ);
+<span class="lineNum">     425 </span>                :            :             /* We don't worry about zeroing the &quot;hole&quot; in this case */
+<span class="lineNum">     426 </span>                :<span class="lineNoCov">          0 :             MarkBufferDirty(pageData-&gt;buffer);</span>
+<span class="lineNum">     427 </span>                :            :         }
+<span class="lineNum">     428 </span>                :<span class="lineNoCov">          0 :         END_CRIT_SECTION();</span>
+<span class="lineNum">     429 </span>                :            :         /* We don't have a LSN to return, in this case */
+<span class="lineNum">     430 </span>                :<span class="lineNoCov">          0 :         lsn = InvalidXLogRecPtr;</span>
+<span class="lineNum">     431 </span>                :            :     }
+<span class="lineNum">     432 </span>                :            : 
+<span class="lineNum">     433 </span>                :<span class="lineNoCov">          0 :     pfree(state);</span>
+<span class="lineNum">     434 </span>                :            : 
+<span class="lineNum">     435 </span>                :<span class="lineNoCov">          0 :     return lsn;</span>
+<span class="lineNum">     436 </span>                :            : }
+<span class="lineNum">     437 </span>                :            : 
+<span class="lineNum">     438 </span>                :            : /*
+<span class="lineNum">     439 </span>                :            :  * Abort generic xlog record construction.  No changes are applied to buffers.
+<span class="lineNum">     440 </span>                :            :  *
+<span class="lineNum">     441 </span>                :            :  * Note: caller is responsible for releasing locks/pins on buffers, if needed.
+<a name="442"><span class="lineNum">     442 </span>                :            :  */</a>
+<span class="lineNum">     443 </span>                :            : void
+<span class="lineNum">     444 </span>                :<span class="lineNoCov">          0 : GenericXLogAbort(GenericXLogState *state)</span>
+<span class="lineNum">     445 </span>                :            : {
+<span class="lineNum">     446 </span>                :<span class="lineNoCov">          0 :     pfree(state);</span>
+<span class="lineNum">     447 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     448 </span>                :            : 
+<span class="lineNum">     449 </span>                :            : /*
+<span class="lineNum">     450 </span>                :            :  * Apply delta to given page image.
+<a name="451"><span class="lineNum">     451 </span>                :            :  */</a>
+<span class="lineNum">     452 </span>                :            : static void
+<span class="lineNum">     453 </span>                :<span class="lineNoCov">          0 : applyPageRedo(Page page, const char *delta, Size deltaSize)</span>
+<span class="lineNum">     454 </span>                :            : {
+<span class="lineNum">     455 </span>                :<span class="lineNoCov">          0 :     const char *ptr = delta;</span>
+<span class="lineNum">     456 </span>                :<span class="lineNoCov">          0 :     const char *end = delta + deltaSize;</span>
+<span class="lineNum">     457 </span>                :            : 
+<span class="lineNum">     458 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     while (ptr &lt; end)</span>
+<span class="lineNum">     459 </span>                :            :     {
+<span class="lineNum">     460 </span>                :            :         OffsetNumber offset,
+<span class="lineNum">     461 </span>                :            :                     length;
+<span class="lineNum">     462 </span>                :            : 
+<span class="lineNum">     463 </span>                :<span class="lineNoCov">          0 :         memcpy(&amp;offset, ptr, sizeof(offset));</span>
+<span class="lineNum">     464 </span>                :<span class="lineNoCov">          0 :         ptr += sizeof(offset);</span>
+<span class="lineNum">     465 </span>                :<span class="lineNoCov">          0 :         memcpy(&amp;length, ptr, sizeof(length));</span>
+<span class="lineNum">     466 </span>                :<span class="lineNoCov">          0 :         ptr += sizeof(length);</span>
+<span class="lineNum">     467 </span>                :            : 
+<span class="lineNum">     468 </span>                :<span class="lineNoCov">          0 :         memcpy(page + offset, ptr, length);</span>
+<span class="lineNum">     469 </span>                :            : 
+<span class="lineNum">     470 </span>                :<span class="lineNoCov">          0 :         ptr += length;</span>
+<span class="lineNum">     471 </span>                :            :     }
+<span class="lineNum">     472 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     473 </span>                :            : 
+<span class="lineNum">     474 </span>                :            : /*
+<span class="lineNum">     475 </span>                :            :  * Redo function for generic xlog record.
+<a name="476"><span class="lineNum">     476 </span>                :            :  */</a>
+<span class="lineNum">     477 </span>                :            : void
+<span class="lineNum">     478 </span>                :<span class="lineNoCov">          0 : generic_redo(XLogReaderState *record)</span>
+<span class="lineNum">     479 </span>                :            : {
+<span class="lineNum">     480 </span>                :<span class="lineNoCov">          0 :     XLogRecPtr  lsn = record-&gt;EndRecPtr;</span>
+<span class="lineNum">     481 </span>                :            :     Buffer      buffers[MAX_GENERIC_XLOG_PAGES];
+<span class="lineNum">     482 </span>                :            :     uint8       block_id;
+<span class="lineNum">     483 </span>                :            : 
+<span class="lineNum">     484 </span>                :            :     /* Protect limited size of buffers[] array */
+<span class="lineNum">     485 </span>                :            :     Assert(record-&gt;max_block_id &lt; MAX_GENERIC_XLOG_PAGES);
+<span class="lineNum">     486 </span>                :            : 
+<span class="lineNum">     487 </span>                :            :     /* Iterate over blocks */
+<span class="lineNum">     488 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     for (block_id = 0; block_id &lt;= record-&gt;max_block_id; block_id++)</span>
+<span class="lineNum">     489 </span>                :            :     {
+<span class="lineNum">     490 </span>                :            :         XLogRedoAction action;
+<span class="lineNum">     491 </span>                :            : 
+<span class="lineNum">     492 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (!XLogRecHasBlockRef(record, block_id))</span>
+<span class="lineNum">     493 </span>                :            :         {
+<span class="lineNum">     494 </span>                :<span class="lineNoCov">          0 :             buffers[block_id] = InvalidBuffer;</span>
+<span class="lineNum">     495 </span>                :<span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     496 </span>                :            :         }
+<span class="lineNum">     497 </span>                :            : 
+<span class="lineNum">     498 </span>                :<span class="lineNoCov">          0 :         action = XLogReadBufferForRedo(record, block_id, &amp;buffers[block_id]);</span>
+<span class="lineNum">     499 </span>                :            : 
+<span class="lineNum">     500 </span>                :            :         /* Apply redo to given block if needed */
+<span class="lineNum">     501 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (action == BLK_NEEDS_REDO)</span>
+<span class="lineNum">     502 </span>                :            :         {
+<span class="lineNum">     503 </span>                :            :             Page        page;
+<span class="lineNum">     504 </span>                :            :             PageHeader  pageHeader;
+<span class="lineNum">     505 </span>                :            :             char       *blockDelta;
+<span class="lineNum">     506 </span>                :            :             Size        blockDeltaSize;
+<span class="lineNum">     507 </span>                :            : 
+<span class="lineNum">     508 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             page = BufferGetPage(buffers[block_id]);</span>
+<span class="lineNum">     509 </span>                :<span class="lineNoCov">          0 :             blockDelta = XLogRecGetBlockData(record, block_id, &amp;blockDeltaSize);</span>
+<span class="lineNum">     510 </span>                :<span class="lineNoCov">          0 :             applyPageRedo(page, blockDelta, blockDeltaSize);</span>
+<span class="lineNum">     511 </span>                :            : 
+<span class="lineNum">     512 </span>                :            :             /*
+<span class="lineNum">     513 </span>                :            :              * Since the delta contains no information about what's in the
+<span class="lineNum">     514 </span>                :            :              * &quot;hole&quot; between pd_lower and pd_upper, set that to zero to
+<span class="lineNum">     515 </span>                :            :              * ensure we produce the same page state that application of the
+<span class="lineNum">     516 </span>                :            :              * logged action by GenericXLogFinish did.
+<span class="lineNum">     517 </span>                :            :              */
+<span class="lineNum">     518 </span>                :<span class="lineNoCov">          0 :             pageHeader = (PageHeader) page;</span>
+<span class="lineNum">     519 </span>                :<span class="lineNoCov">          0 :             memset(page + pageHeader-&gt;pd_lower, 0,</span>
+<span class="lineNum">     520 </span>                :<span class="lineNoCov">          0 :                    pageHeader-&gt;pd_upper - pageHeader-&gt;pd_lower);</span>
+<span class="lineNum">     521 </span>                :            : 
+<span class="lineNum">     522 </span>                :<span class="lineNoCov">          0 :             PageSetLSN(page, lsn);</span>
+<span class="lineNum">     523 </span>                :<span class="lineNoCov">          0 :             MarkBufferDirty(buffers[block_id]);</span>
+<span class="lineNum">     524 </span>                :            :         }
+<span class="lineNum">     525 </span>                :            :     }
+<span class="lineNum">     526 </span>                :            : 
+<span class="lineNum">     527 </span>                :            :     /* Changes are done: unlock and release all buffers */
+<span class="lineNum">     528 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     for (block_id = 0; block_id &lt;= record-&gt;max_block_id; block_id++)</span>
+<span class="lineNum">     529 </span>                :            :     {
+<span class="lineNum">     530 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (BufferIsValid(buffers[block_id]))</span>
+<span class="lineNum">     531 </span>                :<span class="lineNoCov">          0 :             UnlockReleaseBuffer(buffers[block_id]);</span>
+<span class="lineNum">     532 </span>                :            :     }
+<span class="lineNum">     533 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     534 </span>                :            : 
+<span class="lineNum">     535 </span>                :            : /*
+<span class="lineNum">     536 </span>                :            :  * Mask a generic page before performing consistency checks on it.
+<a name="537"><span class="lineNum">     537 </span>                :            :  */</a>
+<span class="lineNum">     538 </span>                :            : void
+<span class="lineNum">     539 </span>                :<span class="lineNoCov">          0 : generic_mask(char *page, BlockNumber blkno)</span>
+<span class="lineNum">     540 </span>                :            : {
+<span class="lineNum">     541 </span>                :<span class="lineNoCov">          0 :     mask_page_lsn_and_checksum(page);</span>
+<span class="lineNum">     542 </span>                :            : 
+<span class="lineNum">     543 </span>                :<span class="lineNoCov">          0 :     mask_unused_space(page);</span>
+<span class="lineNum">     544 </span>                :<span class="lineNoCov">          0 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,1413 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/access/heap/rewriteheap.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/access/heap</a> - rewriteheap.c<span style="font-size: 80%;"> (source / <a href="rewriteheap.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">11</td>
+            <td class="headerCovTableEntry">327</td>
+            <td class="headerCovTableEntryLo">3.4 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:33:39</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">1</td>
+            <td class="headerCovTableEntry">12</td>
+            <td class="headerCovTableEntryLo">8.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">6</td>
+            <td class="headerCovTableEntry">230</td>
+            <td class="headerCovTableEntryLo">2.6 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">           Branch data     Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>                :            : /*-------------------------------------------------------------------------</a>
+<span class="lineNum">       2 </span>                :            :  *
+<span class="lineNum">       3 </span>                :            :  * rewriteheap.c
+<span class="lineNum">       4 </span>                :            :  *    Support functions to rewrite tables.
+<span class="lineNum">       5 </span>                :            :  *
+<span class="lineNum">       6 </span>                :            :  * These functions provide a facility to completely rewrite a heap, while
+<span class="lineNum">       7 </span>                :            :  * preserving visibility information and update chains.
+<span class="lineNum">       8 </span>                :            :  *
+<span class="lineNum">       9 </span>                :            :  * INTERFACE
+<span class="lineNum">      10 </span>                :            :  *
+<span class="lineNum">      11 </span>                :            :  * The caller is responsible for creating the new heap, all catalog
+<span class="lineNum">      12 </span>                :            :  * changes, supplying the tuples to be written to the new heap, and
+<span class="lineNum">      13 </span>                :            :  * rebuilding indexes.  The caller must hold AccessExclusiveLock on the
+<span class="lineNum">      14 </span>                :            :  * target table, because we assume no one else is writing into it.
+<span class="lineNum">      15 </span>                :            :  *
+<span class="lineNum">      16 </span>                :            :  * To use the facility:
+<span class="lineNum">      17 </span>                :            :  *
+<span class="lineNum">      18 </span>                :            :  * begin_heap_rewrite
+<span class="lineNum">      19 </span>                :            :  * while (fetch next tuple)
+<span class="lineNum">      20 </span>                :            :  * {
+<span class="lineNum">      21 </span>                :            :  *     if (tuple is dead)
+<span class="lineNum">      22 </span>                :            :  *         rewrite_heap_dead_tuple
+<span class="lineNum">      23 </span>                :            :  *     else
+<span class="lineNum">      24 </span>                :            :  *     {
+<span class="lineNum">      25 </span>                :            :  *         // do any transformations here if required
+<span class="lineNum">      26 </span>                :            :  *         rewrite_heap_tuple
+<span class="lineNum">      27 </span>                :            :  *     }
+<span class="lineNum">      28 </span>                :            :  * }
+<span class="lineNum">      29 </span>                :            :  * end_heap_rewrite
+<span class="lineNum">      30 </span>                :            :  *
+<span class="lineNum">      31 </span>                :            :  * The contents of the new relation shouldn't be relied on until after
+<span class="lineNum">      32 </span>                :            :  * end_heap_rewrite is called.
+<span class="lineNum">      33 </span>                :            :  *
+<span class="lineNum">      34 </span>                :            :  *
+<span class="lineNum">      35 </span>                :            :  * IMPLEMENTATION
+<span class="lineNum">      36 </span>                :            :  *
+<span class="lineNum">      37 </span>                :            :  * This would be a fairly trivial affair, except that we need to maintain
+<span class="lineNum">      38 </span>                :            :  * the ctid chains that link versions of an updated tuple together.
+<span class="lineNum">      39 </span>                :            :  * Since the newly stored tuples will have tids different from the original
+<span class="lineNum">      40 </span>                :            :  * ones, if we just copied t_ctid fields to the new table the links would
+<span class="lineNum">      41 </span>                :            :  * be wrong.  When we are required to copy a (presumably recently-dead or
+<span class="lineNum">      42 </span>                :            :  * delete-in-progress) tuple whose ctid doesn't point to itself, we have
+<span class="lineNum">      43 </span>                :            :  * to substitute the correct ctid instead.
+<span class="lineNum">      44 </span>                :            :  *
+<span class="lineNum">      45 </span>                :            :  * For each ctid reference from A -&gt; B, we might encounter either A first
+<span class="lineNum">      46 </span>                :            :  * or B first.  (Note that a tuple in the middle of a chain is both A and B
+<span class="lineNum">      47 </span>                :            :  * of different pairs.)
+<span class="lineNum">      48 </span>                :            :  *
+<span class="lineNum">      49 </span>                :            :  * If we encounter A first, we'll store the tuple in the unresolved_tups
+<span class="lineNum">      50 </span>                :            :  * hash table. When we later encounter B, we remove A from the hash table,
+<span class="lineNum">      51 </span>                :            :  * fix the ctid to point to the new location of B, and insert both A and B
+<span class="lineNum">      52 </span>                :            :  * to the new heap.
+<span class="lineNum">      53 </span>                :            :  *
+<span class="lineNum">      54 </span>                :            :  * If we encounter B first, we can insert B to the new heap right away.
+<span class="lineNum">      55 </span>                :            :  * We then add an entry to the old_new_tid_map hash table showing B's
+<span class="lineNum">      56 </span>                :            :  * original tid (in the old heap) and new tid (in the new heap).
+<span class="lineNum">      57 </span>                :            :  * When we later encounter A, we get the new location of B from the table,
+<span class="lineNum">      58 </span>                :            :  * and can write A immediately with the correct ctid.
+<span class="lineNum">      59 </span>                :            :  *
+<span class="lineNum">      60 </span>                :            :  * Entries in the hash tables can be removed as soon as the later tuple
+<span class="lineNum">      61 </span>                :            :  * is encountered.  That helps to keep the memory usage down.  At the end,
+<span class="lineNum">      62 </span>                :            :  * both tables are usually empty; we should have encountered both A and B
+<span class="lineNum">      63 </span>                :            :  * of each pair.  However, it's possible for A to be RECENTLY_DEAD and B
+<span class="lineNum">      64 </span>                :            :  * entirely DEAD according to HeapTupleSatisfiesVacuum, because the test
+<span class="lineNum">      65 </span>                :            :  * for deadness using OldestXmin is not exact.  In such a case we might
+<span class="lineNum">      66 </span>                :            :  * encounter B first, and skip it, and find A later.  Then A would be added
+<span class="lineNum">      67 </span>                :            :  * to unresolved_tups, and stay there until end of the rewrite.  Since
+<span class="lineNum">      68 </span>                :            :  * this case is very unusual, we don't worry about the memory usage.
+<span class="lineNum">      69 </span>                :            :  *
+<span class="lineNum">      70 </span>                :            :  * Using in-memory hash tables means that we use some memory for each live
+<span class="lineNum">      71 </span>                :            :  * update chain in the table, from the time we find one end of the
+<span class="lineNum">      72 </span>                :            :  * reference until we find the other end.  That shouldn't be a problem in
+<span class="lineNum">      73 </span>                :            :  * practice, but if you do something like an UPDATE without a where-clause
+<span class="lineNum">      74 </span>                :            :  * on a large table, and then run CLUSTER in the same transaction, you
+<span class="lineNum">      75 </span>                :            :  * could run out of memory.  It doesn't seem worthwhile to add support for
+<span class="lineNum">      76 </span>                :            :  * spill-to-disk, as there shouldn't be that many RECENTLY_DEAD tuples in a
+<span class="lineNum">      77 </span>                :            :  * table under normal circumstances.  Furthermore, in the typical scenario
+<span class="lineNum">      78 </span>                :            :  * of CLUSTERing on an unchanging key column, we'll see all the versions
+<span class="lineNum">      79 </span>                :            :  * of a given tuple together anyway, and so the peak memory usage is only
+<span class="lineNum">      80 </span>                :            :  * proportional to the number of RECENTLY_DEAD versions of a single row, not
+<span class="lineNum">      81 </span>                :            :  * in the whole table.  Note that if we do fail halfway through a CLUSTER,
+<span class="lineNum">      82 </span>                :            :  * the old table is still valid, so failure is not catastrophic.
+<span class="lineNum">      83 </span>                :            :  *
+<span class="lineNum">      84 </span>                :            :  * We can't use the normal heap_insert function to insert into the new
+<span class="lineNum">      85 </span>                :            :  * heap, because heap_insert overwrites the visibility information.
+<span class="lineNum">      86 </span>                :            :  * We use a special-purpose raw_heap_insert function instead, which
+<span class="lineNum">      87 </span>                :            :  * is optimized for bulk inserting a lot of tuples, knowing that we have
+<span class="lineNum">      88 </span>                :            :  * exclusive access to the heap.  raw_heap_insert builds new pages in
+<span class="lineNum">      89 </span>                :            :  * local storage.  When a page is full, or at the end of the process,
+<span class="lineNum">      90 </span>                :            :  * we insert it to WAL as a single record and then write it to disk
+<span class="lineNum">      91 </span>                :            :  * directly through smgr.  Note, however, that any data sent to the new
+<span class="lineNum">      92 </span>                :            :  * heap's TOAST table will go through the normal bufmgr.
+<span class="lineNum">      93 </span>                :            :  *
+<span class="lineNum">      94 </span>                :            :  *
+<span class="lineNum">      95 </span>                :            :  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+<span class="lineNum">      96 </span>                :            :  * Portions Copyright (c) 1994-5, Regents of the University of California
+<span class="lineNum">      97 </span>                :            :  *
+<span class="lineNum">      98 </span>                :            :  * IDENTIFICATION
+<span class="lineNum">      99 </span>                :            :  *    src/backend/access/heap/rewriteheap.c
+<span class="lineNum">     100 </span>                :            :  *
+<span class="lineNum">     101 </span>                :            :  *-------------------------------------------------------------------------
+<span class="lineNum">     102 </span>                :            :  */
+<span class="lineNum">     103 </span>                :            : #include &quot;postgres.h&quot;
+<span class="lineNum">     104 </span>                :            : 
+<span class="lineNum">     105 </span>                :            : #include &lt;sys/stat.h&gt;
+<span class="lineNum">     106 </span>                :            : #include &lt;unistd.h&gt;
+<span class="lineNum">     107 </span>                :            : 
+<span class="lineNum">     108 </span>                :            : #include &quot;miscadmin.h&quot;
+<span class="lineNum">     109 </span>                :            : 
+<span class="lineNum">     110 </span>                :            : #include &quot;access/heapam.h&quot;
+<span class="lineNum">     111 </span>                :            : #include &quot;access/heapam_xlog.h&quot;
+<span class="lineNum">     112 </span>                :            : #include &quot;access/rewriteheap.h&quot;
+<span class="lineNum">     113 </span>                :            : #include &quot;access/transam.h&quot;
+<span class="lineNum">     114 </span>                :            : #include &quot;access/tuptoaster.h&quot;
+<span class="lineNum">     115 </span>                :            : #include &quot;access/xact.h&quot;
+<span class="lineNum">     116 </span>                :            : #include &quot;access/xloginsert.h&quot;
+<span class="lineNum">     117 </span>                :            : 
+<span class="lineNum">     118 </span>                :            : #include &quot;catalog/catalog.h&quot;
+<span class="lineNum">     119 </span>                :            : 
+<span class="lineNum">     120 </span>                :            : #include &quot;lib/ilist.h&quot;
+<span class="lineNum">     121 </span>                :            : 
+<span class="lineNum">     122 </span>                :            : #include &quot;pgstat.h&quot;
+<span class="lineNum">     123 </span>                :            : 
+<span class="lineNum">     124 </span>                :            : #include &quot;replication/logical.h&quot;
+<span class="lineNum">     125 </span>                :            : #include &quot;replication/slot.h&quot;
+<span class="lineNum">     126 </span>                :            : 
+<span class="lineNum">     127 </span>                :            : #include &quot;storage/bufmgr.h&quot;
+<span class="lineNum">     128 </span>                :            : #include &quot;storage/fd.h&quot;
+<span class="lineNum">     129 </span>                :            : #include &quot;storage/smgr.h&quot;
+<span class="lineNum">     130 </span>                :            : 
+<span class="lineNum">     131 </span>                :            : #include &quot;utils/memutils.h&quot;
+<span class="lineNum">     132 </span>                :            : #include &quot;utils/rel.h&quot;
+<span class="lineNum">     133 </span>                :            : 
+<span class="lineNum">     134 </span>                :            : #include &quot;storage/procarray.h&quot;
+<span class="lineNum">     135 </span>                :            : 
+<span class="lineNum">     136 </span>                :            : /*
+<span class="lineNum">     137 </span>                :            :  * State associated with a rewrite operation. This is opaque to the user
+<span class="lineNum">     138 </span>                :            :  * of the rewrite facility.
+<span class="lineNum">     139 </span>                :            :  */
+<span class="lineNum">     140 </span>                :            : typedef struct RewriteStateData
+<span class="lineNum">     141 </span>                :            : {
+<span class="lineNum">     142 </span>                :            :     Relation    rs_old_rel;     /* source heap */
+<span class="lineNum">     143 </span>                :            :     Relation    rs_new_rel;     /* destination heap */
+<span class="lineNum">     144 </span>                :            :     Page        rs_buffer;      /* page currently being built */
+<span class="lineNum">     145 </span>                :            :     BlockNumber rs_blockno;     /* block where page will go */
+<span class="lineNum">     146 </span>                :            :     bool        rs_buffer_valid;    /* T if any tuples in buffer */
+<span class="lineNum">     147 </span>                :            :     bool        rs_use_wal;     /* must we WAL-log inserts? */
+<span class="lineNum">     148 </span>                :            :     bool        rs_logical_rewrite; /* do we need to do logical rewriting */
+<span class="lineNum">     149 </span>                :            :     TransactionId rs_oldest_xmin;   /* oldest xmin used by caller to determine
+<span class="lineNum">     150 </span>                :            :                                      * tuple visibility */
+<span class="lineNum">     151 </span>                :            :     TransactionId rs_freeze_xid;    /* Xid that will be used as freeze cutoff
+<span class="lineNum">     152 </span>                :            :                                      * point */
+<span class="lineNum">     153 </span>                :            :     TransactionId rs_logical_xmin;  /* Xid that will be used as cutoff point
+<span class="lineNum">     154 </span>                :            :                                      * for logical rewrites */
+<span class="lineNum">     155 </span>                :            :     MultiXactId rs_cutoff_multi;    /* MultiXactId that will be used as cutoff
+<span class="lineNum">     156 </span>                :            :                                      * point for multixacts */
+<span class="lineNum">     157 </span>                :            :     MemoryContext rs_cxt;       /* for hash tables and entries and tuples in
+<span class="lineNum">     158 </span>                :            :                                  * them */
+<span class="lineNum">     159 </span>                :            :     XLogRecPtr  rs_begin_lsn;   /* XLogInsertLsn when starting the rewrite */
+<span class="lineNum">     160 </span>                :            :     HTAB       *rs_unresolved_tups; /* unmatched A tuples */
+<span class="lineNum">     161 </span>                :            :     HTAB       *rs_old_new_tid_map; /* unmatched B tuples */
+<span class="lineNum">     162 </span>                :            :     HTAB       *rs_logical_mappings;    /* logical remapping files */
+<span class="lineNum">     163 </span>                :            :     uint32      rs_num_rewrite_mappings;    /* # in memory mappings */
+<span class="lineNum">     164 </span>                :            : }           RewriteStateData;
+<span class="lineNum">     165 </span>                :            : 
+<span class="lineNum">     166 </span>                :            : /*
+<span class="lineNum">     167 </span>                :            :  * The lookup keys for the hash tables are tuple TID and xmin (we must check
+<span class="lineNum">     168 </span>                :            :  * both to avoid false matches from dead tuples).  Beware that there is
+<span class="lineNum">     169 </span>                :            :  * probably some padding space in this struct; it must be zeroed out for
+<span class="lineNum">     170 </span>                :            :  * correct hashtable operation.
+<span class="lineNum">     171 </span>                :            :  */
+<span class="lineNum">     172 </span>                :            : typedef struct
+<span class="lineNum">     173 </span>                :            : {
+<span class="lineNum">     174 </span>                :            :     TransactionId xmin;         /* tuple xmin */
+<span class="lineNum">     175 </span>                :            :     ItemPointerData tid;        /* tuple location in old heap */
+<span class="lineNum">     176 </span>                :            : } TidHashKey;
+<span class="lineNum">     177 </span>                :            : 
+<span class="lineNum">     178 </span>                :            : /*
+<span class="lineNum">     179 </span>                :            :  * Entry structures for the hash tables
+<span class="lineNum">     180 </span>                :            :  */
+<span class="lineNum">     181 </span>                :            : typedef struct
+<span class="lineNum">     182 </span>                :            : {
+<span class="lineNum">     183 </span>                :            :     TidHashKey  key;            /* expected xmin/old location of B tuple */
+<span class="lineNum">     184 </span>                :            :     ItemPointerData old_tid;    /* A's location in the old heap */
+<span class="lineNum">     185 </span>                :            :     HeapTuple   tuple;          /* A's tuple contents */
+<span class="lineNum">     186 </span>                :            : } UnresolvedTupData;
+<span class="lineNum">     187 </span>                :            : 
+<span class="lineNum">     188 </span>                :            : typedef UnresolvedTupData *UnresolvedTup;
+<span class="lineNum">     189 </span>                :            : 
+<span class="lineNum">     190 </span>                :            : typedef struct
+<span class="lineNum">     191 </span>                :            : {
+<span class="lineNum">     192 </span>                :            :     TidHashKey  key;            /* actual xmin/old location of B tuple */
+<span class="lineNum">     193 </span>                :            :     ItemPointerData new_tid;    /* where we put it in the new heap */
+<span class="lineNum">     194 </span>                :            : } OldToNewMappingData;
+<span class="lineNum">     195 </span>                :            : 
+<span class="lineNum">     196 </span>                :            : typedef OldToNewMappingData *OldToNewMapping;
+<span class="lineNum">     197 </span>                :            : 
+<span class="lineNum">     198 </span>                :            : /*
+<span class="lineNum">     199 </span>                :            :  * In-Memory data for an xid that might need logical remapping entries
+<span class="lineNum">     200 </span>                :            :  * to be logged.
+<span class="lineNum">     201 </span>                :            :  */
+<span class="lineNum">     202 </span>                :            : typedef struct RewriteMappingFile
+<span class="lineNum">     203 </span>                :            : {
+<span class="lineNum">     204 </span>                :            :     TransactionId xid;          /* xid that might need to see the row */
+<span class="lineNum">     205 </span>                :            :     int         vfd;            /* fd of mappings file */
+<span class="lineNum">     206 </span>                :            :     off_t       off;            /* how far have we written yet */
+<span class="lineNum">     207 </span>                :            :     uint32      num_mappings;   /* number of in-memory mappings */
+<span class="lineNum">     208 </span>                :            :     dlist_head  mappings;       /* list of in-memory mappings */
+<span class="lineNum">     209 </span>                :            :     char        path[MAXPGPATH];    /* path, for error messages */
+<span class="lineNum">     210 </span>                :            : } RewriteMappingFile;
+<span class="lineNum">     211 </span>                :            : 
+<span class="lineNum">     212 </span>                :            : /*
+<span class="lineNum">     213 </span>                :            :  * A single In-Memory logical rewrite mapping, hanging off
+<span class="lineNum">     214 </span>                :            :  * RewriteMappingFile-&gt;mappings.
+<span class="lineNum">     215 </span>                :            :  */
+<span class="lineNum">     216 </span>                :            : typedef struct RewriteMappingDataEntry
+<span class="lineNum">     217 </span>                :            : {
+<span class="lineNum">     218 </span>                :            :     LogicalRewriteMappingData map;  /* map between old and new location of the
+<span class="lineNum">     219 </span>                :            :                                      * tuple */
+<span class="lineNum">     220 </span>                :            :     dlist_node  node;
+<span class="lineNum">     221 </span>                :            : } RewriteMappingDataEntry;
+<span class="lineNum">     222 </span>                :            : 
+<span class="lineNum">     223 </span>                :            : 
+<span class="lineNum">     224 </span>                :            : /* prototypes for internal functions */
+<span class="lineNum">     225 </span>                :            : static void raw_heap_insert(RewriteState state, HeapTuple tup);
+<span class="lineNum">     226 </span>                :            : 
+<span class="lineNum">     227 </span>                :            : /* internal logical remapping prototypes */
+<span class="lineNum">     228 </span>                :            : static void logical_begin_heap_rewrite(RewriteState state);
+<span class="lineNum">     229 </span>                :            : static void logical_rewrite_heap_tuple(RewriteState state, ItemPointerData old_tid, HeapTuple new_tuple);
+<span class="lineNum">     230 </span>                :            : static void logical_end_heap_rewrite(RewriteState state);
+<span class="lineNum">     231 </span>                :            : 
+<span class="lineNum">     232 </span>                :            : 
+<span class="lineNum">     233 </span>                :            : /*
+<span class="lineNum">     234 </span>                :            :  * Begin a rewrite of a table
+<span class="lineNum">     235 </span>                :            :  *
+<span class="lineNum">     236 </span>                :            :  * old_heap     old, locked heap relation tuples will be read from
+<span class="lineNum">     237 </span>                :            :  * new_heap     new, locked heap relation to insert tuples to
+<span class="lineNum">     238 </span>                :            :  * oldest_xmin  xid used by the caller to determine which tuples are dead
+<span class="lineNum">     239 </span>                :            :  * freeze_xid   xid before which tuples will be frozen
+<span class="lineNum">     240 </span>                :            :  * min_multi    multixact before which multis will be removed
+<span class="lineNum">     241 </span>                :            :  * use_wal      should the inserts to the new heap be WAL-logged?
+<span class="lineNum">     242 </span>                :            :  *
+<span class="lineNum">     243 </span>                :            :  * Returns an opaque RewriteState, allocated in current memory context,
+<span class="lineNum">     244 </span>                :            :  * to be used in subsequent calls to the other functions.
+<a name="245"><span class="lineNum">     245 </span>                :            :  */</a>
+<span class="lineNum">     246 </span>                :            : RewriteState
+<span class="lineNum">     247 </span>                :<span class="lineNoCov">          0 : begin_heap_rewrite(Relation old_heap, Relation new_heap, TransactionId oldest_xmin,</span>
+<span class="lineNum">     248 </span>                :            :                    TransactionId freeze_xid, MultiXactId cutoff_multi,
+<span class="lineNum">     249 </span>                :            :                    bool use_wal)
+<span class="lineNum">     250 </span>                :            : {
+<span class="lineNum">     251 </span>                :            :     RewriteState state;
+<span class="lineNum">     252 </span>                :            :     MemoryContext rw_cxt;
+<span class="lineNum">     253 </span>                :            :     MemoryContext old_cxt;
+<span class="lineNum">     254 </span>                :            :     HASHCTL     hash_ctl;
+<span class="lineNum">     255 </span>                :            : 
+<span class="lineNum">     256 </span>                :            :     /*
+<span class="lineNum">     257 </span>                :            :      * To ease cleanup, make a separate context that will contain the
+<span class="lineNum">     258 </span>                :            :      * RewriteState struct itself plus all subsidiary data.
+<span class="lineNum">     259 </span>                :            :      */
+<span class="lineNum">     260 </span>                :<span class="lineNoCov">          0 :     rw_cxt = AllocSetContextCreate(CurrentMemoryContext,</span>
+<span class="lineNum">     261 </span>                :            :                                    &quot;Table rewrite&quot;,
+<span class="lineNum">     262 </span>                :            :                                    ALLOCSET_DEFAULT_SIZES);
+<span class="lineNum">     263 </span>                :<span class="lineNoCov">          0 :     old_cxt = MemoryContextSwitchTo(rw_cxt);</span>
+<span class="lineNum">     264 </span>                :            : 
+<span class="lineNum">     265 </span>                :            :     /* Create and fill in the state struct */
+<span class="lineNum">     266 </span>                :<span class="lineNoCov">          0 :     state = palloc0(sizeof(RewriteStateData));</span>
+<span class="lineNum">     267 </span>                :            : 
+<span class="lineNum">     268 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_old_rel = old_heap;</span>
+<span class="lineNum">     269 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_new_rel = new_heap;</span>
+<span class="lineNum">     270 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_buffer = (Page) palloc(BLCKSZ);</span>
+<span class="lineNum">     271 </span>                :            :     /* new_heap needn't be empty, just locked */
+<span class="lineNum">     272 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_blockno = RelationGetNumberOfBlocks(new_heap);</span>
+<span class="lineNum">     273 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_buffer_valid = false;</span>
+<span class="lineNum">     274 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_use_wal = use_wal;</span>
+<span class="lineNum">     275 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_oldest_xmin = oldest_xmin;</span>
+<span class="lineNum">     276 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_freeze_xid = freeze_xid;</span>
+<span class="lineNum">     277 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_cutoff_multi = cutoff_multi;</span>
+<span class="lineNum">     278 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_cxt = rw_cxt;</span>
+<span class="lineNum">     279 </span>                :            : 
+<span class="lineNum">     280 </span>                :            :     /* Initialize hash tables used to track update chains */
+<span class="lineNum">     281 </span>                :<span class="lineNoCov">          0 :     memset(&amp;hash_ctl, 0, sizeof(hash_ctl));</span>
+<span class="lineNum">     282 </span>                :<span class="lineNoCov">          0 :     hash_ctl.keysize = sizeof(TidHashKey);</span>
+<span class="lineNum">     283 </span>                :<span class="lineNoCov">          0 :     hash_ctl.entrysize = sizeof(UnresolvedTupData);</span>
+<span class="lineNum">     284 </span>                :<span class="lineNoCov">          0 :     hash_ctl.hcxt = state-&gt;rs_cxt;</span>
+<span class="lineNum">     285 </span>                :            : 
+<span class="lineNum">     286 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_unresolved_tups =</span>
+<span class="lineNum">     287 </span>                :<span class="lineNoCov">          0 :         hash_create(&quot;Rewrite / Unresolved ctids&quot;,</span>
+<span class="lineNum">     288 </span>                :            :                     128,        /* arbitrary initial size */
+<span class="lineNum">     289 </span>                :            :                     &amp;hash_ctl,
+<span class="lineNum">     290 </span>                :            :                     HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+<span class="lineNum">     291 </span>                :            : 
+<span class="lineNum">     292 </span>                :<span class="lineNoCov">          0 :     hash_ctl.entrysize = sizeof(OldToNewMappingData);</span>
+<span class="lineNum">     293 </span>                :            : 
+<span class="lineNum">     294 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_old_new_tid_map =</span>
+<span class="lineNum">     295 </span>                :<span class="lineNoCov">          0 :         hash_create(&quot;Rewrite / Old to new tid map&quot;,</span>
+<span class="lineNum">     296 </span>                :            :                     128,        /* arbitrary initial size */
+<span class="lineNum">     297 </span>                :            :                     &amp;hash_ctl,
+<span class="lineNum">     298 </span>                :            :                     HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+<span class="lineNum">     299 </span>                :            : 
+<span class="lineNum">     300 </span>                :<span class="lineNoCov">          0 :     MemoryContextSwitchTo(old_cxt);</span>
+<span class="lineNum">     301 </span>                :            : 
+<span class="lineNum">     302 </span>                :<span class="lineNoCov">          0 :     logical_begin_heap_rewrite(state);</span>
+<span class="lineNum">     303 </span>                :            : 
+<span class="lineNum">     304 </span>                :<span class="lineNoCov">          0 :     return state;</span>
+<span class="lineNum">     305 </span>                :            : }
+<span class="lineNum">     306 </span>                :            : 
+<span class="lineNum">     307 </span>                :            : /*
+<span class="lineNum">     308 </span>                :            :  * End a rewrite.
+<span class="lineNum">     309 </span>                :            :  *
+<span class="lineNum">     310 </span>                :            :  * state and any other resources are freed.
+<a name="311"><span class="lineNum">     311 </span>                :            :  */</a>
+<span class="lineNum">     312 </span>                :            : void
+<span class="lineNum">     313 </span>                :<span class="lineNoCov">          0 : end_heap_rewrite(RewriteState state)</span>
+<span class="lineNum">     314 </span>                :            : {
+<span class="lineNum">     315 </span>                :            :     HASH_SEQ_STATUS seq_status;
+<span class="lineNum">     316 </span>                :            :     UnresolvedTup unresolved;
+<span class="lineNum">     317 </span>                :            : 
+<span class="lineNum">     318 </span>                :            :     /*
+<span class="lineNum">     319 </span>                :            :      * Write any remaining tuples in the UnresolvedTups table. If we have any
+<span class="lineNum">     320 </span>                :            :      * left, they should in fact be dead, but let's err on the safe side.
+<span class="lineNum">     321 </span>                :            :      */
+<span class="lineNum">     322 </span>                :<span class="lineNoCov">          0 :     hash_seq_init(&amp;seq_status, state-&gt;rs_unresolved_tups);</span>
+<span class="lineNum">     323 </span>                :            : 
+<span class="lineNum">     324 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     while ((unresolved = hash_seq_search(&amp;seq_status)) != NULL)</span>
+<span class="lineNum">     325 </span>                :            :     {
+<span class="lineNum">     326 </span>                :<span class="lineNoCov">          0 :         ItemPointerSetInvalid(&amp;unresolved-&gt;tuple-&gt;t_data-&gt;t_ctid);</span>
+<span class="lineNum">     327 </span>                :<span class="lineNoCov">          0 :         raw_heap_insert(state, unresolved-&gt;tuple);</span>
+<span class="lineNum">     328 </span>                :            :     }
+<span class="lineNum">     329 </span>                :            : 
+<span class="lineNum">     330 </span>                :            :     /* Write the last page, if any */
+<span class="lineNum">     331 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (state-&gt;rs_buffer_valid)</span>
+<span class="lineNum">     332 </span>                :            :     {
+<span class="lineNum">     333 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (state-&gt;rs_use_wal)</span>
+<span class="lineNum">     334 </span>                :<span class="lineNoCov">          0 :             log_newpage(&amp;state-&gt;rs_new_rel-&gt;rd_node,</span>
+<span class="lineNum">     335 </span>                :            :                         MAIN_FORKNUM,
+<span class="lineNum">     336 </span>                :            :                         state-&gt;rs_blockno,
+<span class="lineNum">     337 </span>                :            :                         state-&gt;rs_buffer,
+<span class="lineNum">     338 </span>                :            :                         true);
+<span class="lineNum">     339 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         RelationOpenSmgr(state-&gt;rs_new_rel);</span>
+<span class="lineNum">     340 </span>                :            : 
+<span class="lineNum">     341 </span>                :<span class="lineNoCov">          0 :         PageSetChecksumInplace(state-&gt;rs_buffer, state-&gt;rs_blockno);</span>
+<span class="lineNum">     342 </span>                :            : 
+<span class="lineNum">     343 </span>                :<span class="lineNoCov">          0 :         smgrextend(state-&gt;rs_new_rel-&gt;rd_smgr, MAIN_FORKNUM, state-&gt;rs_blockno,</span>
+<span class="lineNum">     344 </span>                :            :                    (char *) state-&gt;rs_buffer, true);
+<span class="lineNum">     345 </span>                :            :     }
+<span class="lineNum">     346 </span>                :            : 
+<span class="lineNum">     347 </span>                :            :     /*
+<span class="lineNum">     348 </span>                :            :      * If the rel is WAL-logged, must fsync before commit.  We use heap_sync
+<span class="lineNum">     349 </span>                :            :      * to ensure that the toast table gets fsync'd too.
+<span class="lineNum">     350 </span>                :            :      *
+<span class="lineNum">     351 </span>                :            :      * It's obvious that we must do this when not WAL-logging. It's less
+<span class="lineNum">     352 </span>                :            :      * obvious that we have to do it even if we did WAL-log the pages. The
+<span class="lineNum">     353 </span>                :            :      * reason is the same as in storage.c's RelationCopyStorage(): we're
+<span class="lineNum">     354 </span>                :            :      * writing data that's not in shared buffers, and so a CHECKPOINT
+<span class="lineNum">     355 </span>                :            :      * occurring during the rewriteheap operation won't have fsync'd data we
+<span class="lineNum">     356 </span>                :            :      * wrote before the checkpoint.
+<span class="lineNum">     357 </span>                :            :      */
+<span class="lineNum">     358 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (RelationNeedsWAL(state-&gt;rs_new_rel))</span>
+<span class="lineNum">     359 </span>                :<span class="lineNoCov">          0 :         heap_sync(state-&gt;rs_new_rel);</span>
+<span class="lineNum">     360 </span>                :            : 
+<span class="lineNum">     361 </span>                :<span class="lineNoCov">          0 :     logical_end_heap_rewrite(state);</span>
+<span class="lineNum">     362 </span>                :            : 
+<span class="lineNum">     363 </span>                :            :     /* Deleting the context frees everything */
+<span class="lineNum">     364 </span>                :<span class="lineNoCov">          0 :     MemoryContextDelete(state-&gt;rs_cxt);</span>
+<span class="lineNum">     365 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     366 </span>                :            : 
+<span class="lineNum">     367 </span>                :            : /*
+<span class="lineNum">     368 </span>                :            :  * Add a tuple to the new heap.
+<span class="lineNum">     369 </span>                :            :  *
+<span class="lineNum">     370 </span>                :            :  * Visibility information is copied from the original tuple, except that
+<span class="lineNum">     371 </span>                :            :  * we &quot;freeze&quot; very-old tuples.  Note that since we scribble on new_tuple,
+<span class="lineNum">     372 </span>                :            :  * it had better be temp storage not a pointer to the original tuple.
+<span class="lineNum">     373 </span>                :            :  *
+<span class="lineNum">     374 </span>                :            :  * state        opaque state as returned by begin_heap_rewrite
+<span class="lineNum">     375 </span>                :            :  * old_tuple    original tuple in the old heap
+<span class="lineNum">     376 </span>                :            :  * new_tuple    new, rewritten tuple to be inserted to new heap
+<a name="377"><span class="lineNum">     377 </span>                :            :  */</a>
+<span class="lineNum">     378 </span>                :            : void
+<span class="lineNum">     379 </span>                :<span class="lineNoCov">          0 : rewrite_heap_tuple(RewriteState state,</span>
+<span class="lineNum">     380 </span>                :            :                    HeapTuple old_tuple, HeapTuple new_tuple)
+<span class="lineNum">     381 </span>                :            : {
+<span class="lineNum">     382 </span>                :            :     MemoryContext old_cxt;
+<span class="lineNum">     383 </span>                :            :     ItemPointerData old_tid;
+<span class="lineNum">     384 </span>                :            :     TidHashKey  hashkey;
+<span class="lineNum">     385 </span>                :            :     bool        found;
+<span class="lineNum">     386 </span>                :            :     bool        free_new;
+<span class="lineNum">     387 </span>                :            : 
+<span class="lineNum">     388 </span>                :<span class="lineNoCov">          0 :     old_cxt = MemoryContextSwitchTo(state-&gt;rs_cxt);</span>
+<span class="lineNum">     389 </span>                :            : 
+<span class="lineNum">     390 </span>                :            :     /*
+<span class="lineNum">     391 </span>                :            :      * Copy the original tuple's visibility information into new_tuple.
+<span class="lineNum">     392 </span>                :            :      *
+<span class="lineNum">     393 </span>                :            :      * XXX we might later need to copy some t_infomask2 bits, too? Right now,
+<span class="lineNum">     394 </span>                :            :      * we intentionally clear the HOT status bits.
+<span class="lineNum">     395 </span>                :            :      */
+<span class="lineNum">     396 </span>                :<span class="lineNoCov">          0 :     memcpy(&amp;new_tuple-&gt;t_data-&gt;t_choice.t_heap,</span>
+<span class="lineNum">     397 </span>                :<span class="lineNoCov">          0 :            &amp;old_tuple-&gt;t_data-&gt;t_choice.t_heap,</span>
+<span class="lineNum">     398 </span>                :            :            sizeof(HeapTupleFields));
+<span class="lineNum">     399 </span>                :            : 
+<span class="lineNum">     400 </span>                :<span class="lineNoCov">          0 :     new_tuple-&gt;t_data-&gt;t_infomask &amp;= ~HEAP_XACT_MASK;</span>
+<span class="lineNum">     401 </span>                :<span class="lineNoCov">          0 :     new_tuple-&gt;t_data-&gt;t_infomask2 &amp;= ~HEAP2_XACT_MASK;</span>
+<span class="lineNum">     402 </span>                :<span class="lineNoCov">          0 :     new_tuple-&gt;t_data-&gt;t_infomask |=</span>
+<span class="lineNum">     403 </span>                :<span class="lineNoCov">          0 :         old_tuple-&gt;t_data-&gt;t_infomask &amp; HEAP_XACT_MASK;</span>
+<span class="lineNum">     404 </span>                :            : 
+<span class="lineNum">     405 </span>                :            :     /*
+<span class="lineNum">     406 </span>                :            :      * While we have our hands on the tuple, we may as well freeze any
+<span class="lineNum">     407 </span>                :            :      * eligible xmin or xmax, so that future VACUUM effort can be saved.
+<span class="lineNum">     408 </span>                :            :      */
+<span class="lineNum">     409 </span>                :<span class="lineNoCov">          0 :     heap_freeze_tuple(new_tuple-&gt;t_data,</span>
+<span class="lineNum">     410 </span>                :<span class="lineNoCov">          0 :                       state-&gt;rs_old_rel-&gt;rd_rel-&gt;relfrozenxid,</span>
+<span class="lineNum">     411 </span>                :<span class="lineNoCov">          0 :                       state-&gt;rs_old_rel-&gt;rd_rel-&gt;relminmxid,</span>
+<span class="lineNum">     412 </span>                :            :                       state-&gt;rs_freeze_xid,
+<span class="lineNum">     413 </span>                :            :                       state-&gt;rs_cutoff_multi);
+<span class="lineNum">     414 </span>                :            : 
+<span class="lineNum">     415 </span>                :            :     /*
+<span class="lineNum">     416 </span>                :            :      * Invalid ctid means that ctid should point to the tuple itself. We'll
+<span class="lineNum">     417 </span>                :            :      * override it later if the tuple is part of an update chain.
+<span class="lineNum">     418 </span>                :            :      */
+<span class="lineNum">     419 </span>                :<span class="lineNoCov">          0 :     ItemPointerSetInvalid(&amp;new_tuple-&gt;t_data-&gt;t_ctid);</span>
+<span class="lineNum">     420 </span>                :            : 
+<span class="lineNum">     421 </span>                :            :     /*
+<span class="lineNum">     422 </span>                :            :      * If the tuple has been updated, check the old-to-new mapping hash table.
+<span class="lineNum">     423 </span>                :            :      */
+<span class="lineNum">     424 </span>  [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!((old_tuple-&gt;t_data-&gt;t_infomask &amp; HEAP_XMAX_INVALID) ||</span>
+<span class="lineNum">     425 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :           HeapTupleHeaderIsOnlyLocked(old_tuple-&gt;t_data)) &amp;&amp;</span>
+<span class="lineNum">     426 </span>  [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         !HeapTupleHeaderIndicatesMovedPartitions(old_tuple-&gt;t_data) &amp;&amp;</span>
+<span class="lineNum">     427 </span>                :<span class="lineNoCov">          0 :         !(ItemPointerEquals(&amp;(old_tuple-&gt;t_self),</span>
+<span class="lineNum">     428 </span>                :<span class="lineNoCov">          0 :                             &amp;(old_tuple-&gt;t_data-&gt;t_ctid))))</span>
+<span class="lineNum">     429 </span>                :            :     {
+<span class="lineNum">     430 </span>                :            :         OldToNewMapping mapping;
+<span class="lineNum">     431 </span>                :            : 
+<span class="lineNum">     432 </span>                :<span class="lineNoCov">          0 :         memset(&amp;hashkey, 0, sizeof(hashkey));</span>
+<span class="lineNum">     433 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         hashkey.xmin = HeapTupleHeaderGetUpdateXid(old_tuple-&gt;t_data);</span>
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>]
+<span class="lineNum">     434 </span>                :<span class="lineNoCov">          0 :         hashkey.tid = old_tuple-&gt;t_data-&gt;t_ctid;</span>
+<span class="lineNum">     435 </span>                :            : 
+<span class="lineNum">     436 </span>                :<span class="lineNoCov">          0 :         mapping = (OldToNewMapping)</span>
+<span class="lineNum">     437 </span>                :<span class="lineNoCov">          0 :             hash_search(state-&gt;rs_old_new_tid_map, &amp;hashkey,</span>
+<span class="lineNum">     438 </span>                :            :                         HASH_FIND, NULL);
+<span class="lineNum">     439 </span>                :            : 
+<span class="lineNum">     440 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (mapping != NULL)</span>
+<span class="lineNum">     441 </span>                :            :         {
+<span class="lineNum">     442 </span>                :            :             /*
+<span class="lineNum">     443 </span>                :            :              * We've already copied the tuple that t_ctid points to, so we can
+<span class="lineNum">     444 </span>                :            :              * set the ctid of this tuple to point to the new location, and
+<span class="lineNum">     445 </span>                :            :              * insert it right away.
+<span class="lineNum">     446 </span>                :            :              */
+<span class="lineNum">     447 </span>                :<span class="lineNoCov">          0 :             new_tuple-&gt;t_data-&gt;t_ctid = mapping-&gt;new_tid;</span>
+<span class="lineNum">     448 </span>                :            : 
+<span class="lineNum">     449 </span>                :            :             /* We don't need the mapping entry anymore */
+<span class="lineNum">     450 </span>                :<span class="lineNoCov">          0 :             hash_search(state-&gt;rs_old_new_tid_map, &amp;hashkey,</span>
+<span class="lineNum">     451 </span>                :            :                         HASH_REMOVE, &amp;found);
+<span class="lineNum">     452 </span>                :            :             Assert(found);
+<span class="lineNum">     453 </span>                :            :         }
+<span class="lineNum">     454 </span>                :            :         else
+<span class="lineNum">     455 </span>                :            :         {
+<span class="lineNum">     456 </span>                :            :             /*
+<span class="lineNum">     457 </span>                :            :              * We haven't seen the tuple t_ctid points to yet. Stash this
+<span class="lineNum">     458 </span>                :            :              * tuple into unresolved_tups to be written later.
+<span class="lineNum">     459 </span>                :            :              */
+<span class="lineNum">     460 </span>                :            :             UnresolvedTup unresolved;
+<span class="lineNum">     461 </span>                :            : 
+<span class="lineNum">     462 </span>                :<span class="lineNoCov">          0 :             unresolved = hash_search(state-&gt;rs_unresolved_tups, &amp;hashkey,</span>
+<span class="lineNum">     463 </span>                :            :                                      HASH_ENTER, &amp;found);
+<span class="lineNum">     464 </span>                :            :             Assert(!found);
+<span class="lineNum">     465 </span>                :            : 
+<span class="lineNum">     466 </span>                :<span class="lineNoCov">          0 :             unresolved-&gt;old_tid = old_tuple-&gt;t_self;</span>
+<span class="lineNum">     467 </span>                :<span class="lineNoCov">          0 :             unresolved-&gt;tuple = heap_copytuple(new_tuple);</span>
+<span class="lineNum">     468 </span>                :            : 
+<span class="lineNum">     469 </span>                :            :             /*
+<span class="lineNum">     470 </span>                :            :              * We can't do anything more now, since we don't know where the
+<span class="lineNum">     471 </span>                :            :              * tuple will be written.
+<span class="lineNum">     472 </span>                :            :              */
+<span class="lineNum">     473 </span>                :<span class="lineNoCov">          0 :             MemoryContextSwitchTo(old_cxt);</span>
+<span class="lineNum">     474 </span>                :<span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     475 </span>                :            :         }
+<span class="lineNum">     476 </span>                :            :     }
+<span class="lineNum">     477 </span>                :            : 
+<span class="lineNum">     478 </span>                :            :     /*
+<span class="lineNum">     479 </span>                :            :      * Now we will write the tuple, and then check to see if it is the B tuple
+<span class="lineNum">     480 </span>                :            :      * in any new or known pair.  When we resolve a known pair, we will be
+<span class="lineNum">     481 </span>                :            :      * able to write that pair's A tuple, and then we have to check if it
+<span class="lineNum">     482 </span>                :            :      * resolves some other pair.  Hence, we need a loop here.
+<span class="lineNum">     483 </span>                :            :      */
+<span class="lineNum">     484 </span>                :<span class="lineNoCov">          0 :     old_tid = old_tuple-&gt;t_self;</span>
+<span class="lineNum">     485 </span>                :<span class="lineNoCov">          0 :     free_new = false;</span>
+<span class="lineNum">     486 </span>                :            : 
+<span class="lineNum">     487 </span>                :            :     for (;;)
+<span class="lineNum">     488 </span>                :            :     {
+<span class="lineNum">     489 </span>                :            :         ItemPointerData new_tid;
+<span class="lineNum">     490 </span>                :            : 
+<span class="lineNum">     491 </span>                :            :         /* Insert the tuple and find out where it's put in new_heap */
+<span class="lineNum">     492 </span>                :<span class="lineNoCov">          0 :         raw_heap_insert(state, new_tuple);</span>
+<span class="lineNum">     493 </span>                :<span class="lineNoCov">          0 :         new_tid = new_tuple-&gt;t_self;</span>
+<span class="lineNum">     494 </span>                :            : 
+<span class="lineNum">     495 </span>                :<span class="lineNoCov">          0 :         logical_rewrite_heap_tuple(state, old_tid, new_tuple);</span>
+<span class="lineNum">     496 </span>                :            : 
+<span class="lineNum">     497 </span>                :            :         /*
+<span class="lineNum">     498 </span>                :            :          * If the tuple is the updated version of a row, and the prior version
+<span class="lineNum">     499 </span>                :            :          * wouldn't be DEAD yet, then we need to either resolve the prior
+<span class="lineNum">     500 </span>                :            :          * version (if it's waiting in rs_unresolved_tups), or make an entry
+<span class="lineNum">     501 </span>                :            :          * in rs_old_new_tid_map (so we can resolve it when we do see it). The
+<span class="lineNum">     502 </span>                :            :          * previous tuple's xmax would equal this one's xmin, so it's
+<span class="lineNum">     503 </span>                :            :          * RECENTLY_DEAD if and only if the xmin is not before OldestXmin.
+<span class="lineNum">     504 </span>                :            :          */
+<span class="lineNum">     505 </span>  [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if ((new_tuple-&gt;t_data-&gt;t_infomask &amp; HEAP_UPDATED) &amp;&amp;</span>
+<span class="lineNum">     506 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             !TransactionIdPrecedes(HeapTupleHeaderGetXmin(new_tuple-&gt;t_data),</span>
+<span class="lineNum">     507 </span>                :            :                                    state-&gt;rs_oldest_xmin))
+<span class="lineNum">     508 </span>                :            :         {
+<span class="lineNum">     509 </span>                :            :             /*
+<span class="lineNum">     510 </span>                :            :              * Okay, this is B in an update pair.  See if we've seen A.
+<span class="lineNum">     511 </span>                :            :              */
+<span class="lineNum">     512 </span>                :            :             UnresolvedTup unresolved;
+<span class="lineNum">     513 </span>                :            : 
+<span class="lineNum">     514 </span>                :<span class="lineNoCov">          0 :             memset(&amp;hashkey, 0, sizeof(hashkey));</span>
+<span class="lineNum">     515 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             hashkey.xmin = HeapTupleHeaderGetXmin(new_tuple-&gt;t_data);</span>
+<span class="lineNum">     516 </span>                :<span class="lineNoCov">          0 :             hashkey.tid = old_tid;</span>
+<span class="lineNum">     517 </span>                :            : 
+<span class="lineNum">     518 </span>                :<span class="lineNoCov">          0 :             unresolved = hash_search(state-&gt;rs_unresolved_tups, &amp;hashkey,</span>
+<span class="lineNum">     519 </span>                :            :                                      HASH_FIND, NULL);
+<span class="lineNum">     520 </span>                :            : 
+<span class="lineNum">     521 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (unresolved != NULL)</span>
+<span class="lineNum">     522 </span>                :            :             {
+<span class="lineNum">     523 </span>                :            :                 /*
+<span class="lineNum">     524 </span>                :            :                  * We have seen and memorized the previous tuple already. Now
+<span class="lineNum">     525 </span>                :            :                  * that we know where we inserted the tuple its t_ctid points
+<span class="lineNum">     526 </span>                :            :                  * to, fix its t_ctid and insert it to the new heap.
+<span class="lineNum">     527 </span>                :            :                  */
+<span class="lineNum">     528 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :                 if (free_new)</span>
+<span class="lineNum">     529 </span>                :<span class="lineNoCov">          0 :                     heap_freetuple(new_tuple);</span>
+<span class="lineNum">     530 </span>                :<span class="lineNoCov">          0 :                 new_tuple = unresolved-&gt;tuple;</span>
+<span class="lineNum">     531 </span>                :<span class="lineNoCov">          0 :                 free_new = true;</span>
+<span class="lineNum">     532 </span>                :<span class="lineNoCov">          0 :                 old_tid = unresolved-&gt;old_tid;</span>
+<span class="lineNum">     533 </span>                :<span class="lineNoCov">          0 :                 new_tuple-&gt;t_data-&gt;t_ctid = new_tid;</span>
+<span class="lineNum">     534 </span>                :            : 
+<span class="lineNum">     535 </span>                :            :                 /*
+<span class="lineNum">     536 </span>                :            :                  * We don't need the hash entry anymore, but don't free its
+<span class="lineNum">     537 </span>                :            :                  * tuple just yet.
+<span class="lineNum">     538 </span>                :            :                  */
+<span class="lineNum">     539 </span>                :<span class="lineNoCov">          0 :                 hash_search(state-&gt;rs_unresolved_tups, &amp;hashkey,</span>
+<span class="lineNum">     540 </span>                :            :                             HASH_REMOVE, &amp;found);
+<span class="lineNum">     541 </span>                :            :                 Assert(found);
+<span class="lineNum">     542 </span>                :            : 
+<span class="lineNum">     543 </span>                :            :                 /* loop back to insert the previous tuple in the chain */
+<span class="lineNum">     544 </span>                :<span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     545 </span>                :            :             }
+<span class="lineNum">     546 </span>                :            :             else
+<span class="lineNum">     547 </span>                :            :             {
+<span class="lineNum">     548 </span>                :            :                 /*
+<span class="lineNum">     549 </span>                :            :                  * Remember the new tid of this tuple. We'll use it to set the
+<span class="lineNum">     550 </span>                :            :                  * ctid when we find the previous tuple in the chain.
+<span class="lineNum">     551 </span>                :            :                  */
+<span class="lineNum">     552 </span>                :            :                 OldToNewMapping mapping;
+<span class="lineNum">     553 </span>                :            : 
+<span class="lineNum">     554 </span>                :<span class="lineNoCov">          0 :                 mapping = hash_search(state-&gt;rs_old_new_tid_map, &amp;hashkey,</span>
+<span class="lineNum">     555 </span>                :            :                                       HASH_ENTER, &amp;found);
+<span class="lineNum">     556 </span>                :            :                 Assert(!found);
+<span class="lineNum">     557 </span>                :            : 
+<span class="lineNum">     558 </span>                :<span class="lineNoCov">          0 :                 mapping-&gt;new_tid = new_tid;</span>
+<span class="lineNum">     559 </span>                :            :             }
+<span class="lineNum">     560 </span>                :            :         }
+<span class="lineNum">     561 </span>                :            : 
+<span class="lineNum">     562 </span>                :            :         /* Done with this (chain of) tuples, for now */
+<span class="lineNum">     563 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (free_new)</span>
+<span class="lineNum">     564 </span>                :<span class="lineNoCov">          0 :             heap_freetuple(new_tuple);</span>
+<span class="lineNum">     565 </span>                :<span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     566 </span>                :<span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">     567 </span>                :            : 
+<span class="lineNum">     568 </span>                :<span class="lineNoCov">          0 :     MemoryContextSwitchTo(old_cxt);</span>
+<span class="lineNum">     569 </span>                :            : }
+<span class="lineNum">     570 </span>                :            : 
+<span class="lineNum">     571 </span>                :            : /*
+<span class="lineNum">     572 </span>                :            :  * Register a dead tuple with an ongoing rewrite. Dead tuples are not
+<span class="lineNum">     573 </span>                :            :  * copied to the new table, but we still make note of them so that we
+<span class="lineNum">     574 </span>                :            :  * can release some resources earlier.
+<span class="lineNum">     575 </span>                :            :  *
+<span class="lineNum">     576 </span>                :            :  * Returns true if a tuple was removed from the unresolved_tups table.
+<span class="lineNum">     577 </span>                :            :  * This indicates that that tuple, previously thought to be &quot;recently dead&quot;,
+<span class="lineNum">     578 </span>                :            :  * is now known really dead and won't be written to the output.
+<a name="579"><span class="lineNum">     579 </span>                :            :  */</a>
+<span class="lineNum">     580 </span>                :            : bool
+<span class="lineNum">     581 </span>                :<span class="lineNoCov">          0 : rewrite_heap_dead_tuple(RewriteState state, HeapTuple old_tuple)</span>
+<span class="lineNum">     582 </span>                :            : {
+<span class="lineNum">     583 </span>                :            :     /*
+<span class="lineNum">     584 </span>                :            :      * If we have already seen an earlier tuple in the update chain that
+<span class="lineNum">     585 </span>                :            :      * points to this tuple, let's forget about that earlier tuple. It's in
+<span class="lineNum">     586 </span>                :            :      * fact dead as well, our simple xmax &lt; OldestXmin test in
+<span class="lineNum">     587 </span>                :            :      * HeapTupleSatisfiesVacuum just wasn't enough to detect it. It happens
+<span class="lineNum">     588 </span>                :            :      * when xmin of a tuple is greater than xmax, which sounds
+<span class="lineNum">     589 </span>                :            :      * counter-intuitive but is perfectly valid.
+<span class="lineNum">     590 </span>                :            :      *
+<span class="lineNum">     591 </span>                :            :      * We don't bother to try to detect the situation the other way round,
+<span class="lineNum">     592 </span>                :            :      * when we encounter the dead tuple first and then the recently dead one
+<span class="lineNum">     593 </span>                :            :      * that points to it. If that happens, we'll have some unmatched entries
+<span class="lineNum">     594 </span>                :            :      * in the UnresolvedTups hash table at the end. That can happen anyway,
+<span class="lineNum">     595 </span>                :            :      * because a vacuum might have removed the dead tuple in the chain before
+<span class="lineNum">     596 </span>                :            :      * us.
+<span class="lineNum">     597 </span>                :            :      */
+<span class="lineNum">     598 </span>                :            :     UnresolvedTup unresolved;
+<span class="lineNum">     599 </span>                :            :     TidHashKey  hashkey;
+<span class="lineNum">     600 </span>                :            :     bool        found;
+<span class="lineNum">     601 </span>                :            : 
+<span class="lineNum">     602 </span>                :<span class="lineNoCov">          0 :     memset(&amp;hashkey, 0, sizeof(hashkey));</span>
+<span class="lineNum">     603 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     hashkey.xmin = HeapTupleHeaderGetXmin(old_tuple-&gt;t_data);</span>
+<span class="lineNum">     604 </span>                :<span class="lineNoCov">          0 :     hashkey.tid = old_tuple-&gt;t_self;</span>
+<span class="lineNum">     605 </span>                :            : 
+<span class="lineNum">     606 </span>                :<span class="lineNoCov">          0 :     unresolved = hash_search(state-&gt;rs_unresolved_tups, &amp;hashkey,</span>
+<span class="lineNum">     607 </span>                :            :                              HASH_FIND, NULL);
+<span class="lineNum">     608 </span>                :            : 
+<span class="lineNum">     609 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (unresolved != NULL)</span>
+<span class="lineNum">     610 </span>                :            :     {
+<span class="lineNum">     611 </span>                :            :         /* Need to free the contained tuple as well as the hashtable entry */
+<span class="lineNum">     612 </span>                :<span class="lineNoCov">          0 :         heap_freetuple(unresolved-&gt;tuple);</span>
+<span class="lineNum">     613 </span>                :<span class="lineNoCov">          0 :         hash_search(state-&gt;rs_unresolved_tups, &amp;hashkey,</span>
+<span class="lineNum">     614 </span>                :            :                     HASH_REMOVE, &amp;found);
+<span class="lineNum">     615 </span>                :            :         Assert(found);
+<span class="lineNum">     616 </span>                :<span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     617 </span>                :            :     }
+<span class="lineNum">     618 </span>                :            : 
+<span class="lineNum">     619 </span>                :<span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     620 </span>                :            : }
+<span class="lineNum">     621 </span>                :            : 
+<span class="lineNum">     622 </span>                :            : /*
+<span class="lineNum">     623 </span>                :            :  * Insert a tuple to the new relation.  This has to track heap_insert
+<span class="lineNum">     624 </span>                :            :  * and its subsidiary functions!
+<span class="lineNum">     625 </span>                :            :  *
+<span class="lineNum">     626 </span>                :            :  * t_self of the tuple is set to the new TID of the tuple. If t_ctid of the
+<span class="lineNum">     627 </span>                :            :  * tuple is invalid on entry, it's replaced with the new TID as well (in
+<span class="lineNum">     628 </span>                :            :  * the inserted data only, not in the caller's copy).
+<a name="629"><span class="lineNum">     629 </span>                :            :  */</a>
+<span class="lineNum">     630 </span>                :            : static void
+<span class="lineNum">     631 </span>                :<span class="lineNoCov">          0 : raw_heap_insert(RewriteState state, HeapTuple tup)</span>
+<span class="lineNum">     632 </span>                :            : {
+<span class="lineNum">     633 </span>                :<span class="lineNoCov">          0 :     Page        page = state-&gt;rs_buffer;</span>
+<span class="lineNum">     634 </span>                :            :     Size        pageFreeSpace,
+<span class="lineNum">     635 </span>                :            :                 saveFreeSpace;
+<span class="lineNum">     636 </span>                :            :     Size        len;
+<span class="lineNum">     637 </span>                :            :     OffsetNumber newoff;
+<span class="lineNum">     638 </span>                :            :     HeapTuple   heaptup;
+<span class="lineNum">     639 </span>                :            : 
+<span class="lineNum">     640 </span>                :            :     /*
+<span class="lineNum">     641 </span>                :            :      * If the new tuple is too big for storage or contains already toasted
+<span class="lineNum">     642 </span>                :            :      * out-of-line attributes from some other relation, invoke the toaster.
+<span class="lineNum">     643 </span>                :            :      *
+<span class="lineNum">     644 </span>                :            :      * Note: below this point, heaptup is the data we actually intend to store
+<span class="lineNum">     645 </span>                :            :      * into the relation; tup is the caller's original untoasted data.
+<span class="lineNum">     646 </span>                :            :      */
+<span class="lineNum">     647 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (state-&gt;rs_new_rel-&gt;rd_rel-&gt;relkind == RELKIND_TOASTVALUE)</span>
+<span class="lineNum">     648 </span>                :            :     {
+<span class="lineNum">     649 </span>                :            :         /* toast table entries should never be recursively toasted */
+<span class="lineNum">     650 </span>                :            :         Assert(!HeapTupleHasExternal(tup));
+<span class="lineNum">     651 </span>                :<span class="lineNoCov">          0 :         heaptup = tup;</span>
+<span class="lineNum">     652 </span>                :            :     }
+<span class="lineNum">     653 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :     else if (HeapTupleHasExternal(tup) || tup-&gt;t_len &gt; TOAST_TUPLE_THRESHOLD)</span>
+<span class="lineNum">     654 </span>                :<span class="lineNoCov">          0 :     {</span>
+<span class="lineNum">     655 </span>                :<span class="lineNoCov">          0 :         int         options = HEAP_INSERT_SKIP_FSM;</span>
+<span class="lineNum">     656 </span>                :            : 
+<span class="lineNum">     657 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (!state-&gt;rs_use_wal)</span>
+<span class="lineNum">     658 </span>                :<span class="lineNoCov">          0 :             options |= HEAP_INSERT_SKIP_WAL;</span>
+<span class="lineNum">     659 </span>                :            : 
+<span class="lineNum">     660 </span>                :            :         /*
+<span class="lineNum">     661 </span>                :            :          * While rewriting the heap for VACUUM FULL / CLUSTER, make sure data
+<span class="lineNum">     662 </span>                :            :          * for the TOAST table are not logically decoded.  The main heap is
+<span class="lineNum">     663 </span>                :            :          * WAL-logged as XLOG FPI records, which are not logically decoded.
+<span class="lineNum">     664 </span>                :            :          */
+<span class="lineNum">     665 </span>                :<span class="lineNoCov">          0 :         options |= HEAP_INSERT_NO_LOGICAL;</span>
+<span class="lineNum">     666 </span>                :            : 
+<span class="lineNum">     667 </span>                :<span class="lineNoCov">          0 :         heaptup = toast_insert_or_update(state-&gt;rs_new_rel, tup, NULL,</span>
+<span class="lineNum">     668 </span>                :            :                                          options);
+<span class="lineNum">     669 </span>                :            :     }
+<span class="lineNum">     670 </span>                :            :     else
+<span class="lineNum">     671 </span>                :<span class="lineNoCov">          0 :         heaptup = tup;</span>
+<span class="lineNum">     672 </span>                :            : 
+<span class="lineNum">     673 </span>                :<span class="lineNoCov">          0 :     len = MAXALIGN(heaptup-&gt;t_len); /* be conservative */</span>
+<span class="lineNum">     674 </span>                :            : 
+<span class="lineNum">     675 </span>                :            :     /*
+<span class="lineNum">     676 </span>                :            :      * If we're gonna fail for oversize tuple, do it right away
+<span class="lineNum">     677 </span>                :            :      */
+<span class="lineNum">     678 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (len &gt; MaxHeapTupleSize)</span>
+<span class="lineNum">     679 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         ereport(ERROR,</span>
+<span class="lineNum">     680 </span>                :            :                 (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+<span class="lineNum">     681 </span>                :            :                  errmsg(&quot;row is too big: size %zu, maximum size %zu&quot;,
+<span class="lineNum">     682 </span>                :            :                         len, MaxHeapTupleSize)));
+<span class="lineNum">     683 </span>                :            : 
+<span class="lineNum">     684 </span>                :            :     /* Compute desired extra freespace due to fillfactor option */
+<span class="lineNum">     685 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     saveFreeSpace = RelationGetTargetPageFreeSpace(state-&gt;rs_new_rel,</span>
+<span class="lineNum">     686 </span>                :            :                                                    HEAP_DEFAULT_FILLFACTOR);
+<span class="lineNum">     687 </span>                :            : 
+<span class="lineNum">     688 </span>                :            :     /* Now we can check to see if there's enough free space already. */
+<span class="lineNum">     689 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (state-&gt;rs_buffer_valid)</span>
+<span class="lineNum">     690 </span>                :            :     {
+<span class="lineNum">     691 </span>                :<span class="lineNoCov">          0 :         pageFreeSpace = PageGetHeapFreeSpace(page);</span>
+<span class="lineNum">     692 </span>                :            : 
+<span class="lineNum">     693 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (len + saveFreeSpace &gt; pageFreeSpace)</span>
+<span class="lineNum">     694 </span>                :            :         {
+<span class="lineNum">     695 </span>                :            :             /* Doesn't fit, so write out the existing page */
+<span class="lineNum">     696 </span>                :            : 
+<span class="lineNum">     697 </span>                :            :             /* XLOG stuff */
+<span class="lineNum">     698 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (state-&gt;rs_use_wal)</span>
+<span class="lineNum">     699 </span>                :<span class="lineNoCov">          0 :                 log_newpage(&amp;state-&gt;rs_new_rel-&gt;rd_node,</span>
+<span class="lineNum">     700 </span>                :            :                             MAIN_FORKNUM,
+<span class="lineNum">     701 </span>                :            :                             state-&gt;rs_blockno,
+<span class="lineNum">     702 </span>                :            :                             page,
+<span class="lineNum">     703 </span>                :            :                             true);
+<span class="lineNum">     704 </span>                :            : 
+<span class="lineNum">     705 </span>                :            :             /*
+<span class="lineNum">     706 </span>                :            :              * Now write the page. We say isTemp = true even if it's not a
+<span class="lineNum">     707 </span>                :            :              * temp table, because there's no need for smgr to schedule an
+<span class="lineNum">     708 </span>                :            :              * fsync for this write; we'll do it ourselves in
+<span class="lineNum">     709 </span>                :            :              * end_heap_rewrite.
+<span class="lineNum">     710 </span>                :            :              */
+<span class="lineNum">     711 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             RelationOpenSmgr(state-&gt;rs_new_rel);</span>
+<span class="lineNum">     712 </span>                :            : 
+<span class="lineNum">     713 </span>                :<span class="lineNoCov">          0 :             PageSetChecksumInplace(page, state-&gt;rs_blockno);</span>
+<span class="lineNum">     714 </span>                :            : 
+<span class="lineNum">     715 </span>                :<span class="lineNoCov">          0 :             smgrextend(state-&gt;rs_new_rel-&gt;rd_smgr, MAIN_FORKNUM,</span>
+<span class="lineNum">     716 </span>                :            :                        state-&gt;rs_blockno, (char *) page, true);
+<span class="lineNum">     717 </span>                :            : 
+<span class="lineNum">     718 </span>                :<span class="lineNoCov">          0 :             state-&gt;rs_blockno++;</span>
+<span class="lineNum">     719 </span>                :<span class="lineNoCov">          0 :             state-&gt;rs_buffer_valid = false;</span>
+<span class="lineNum">     720 </span>                :            :         }
+<span class="lineNum">     721 </span>                :            :     }
+<span class="lineNum">     722 </span>                :            : 
+<span class="lineNum">     723 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!state-&gt;rs_buffer_valid)</span>
+<span class="lineNum">     724 </span>                :            :     {
+<span class="lineNum">     725 </span>                :            :         /* Initialize a new empty page */
+<span class="lineNum">     726 </span>                :<span class="lineNoCov">          0 :         PageInit(page, BLCKSZ, 0);</span>
+<span class="lineNum">     727 </span>                :<span class="lineNoCov">          0 :         state-&gt;rs_buffer_valid = true;</span>
+<span class="lineNum">     728 </span>                :            :     }
+<span class="lineNum">     729 </span>                :            : 
+<span class="lineNum">     730 </span>                :            :     /* And now we can insert the tuple into the page */
+<span class="lineNum">     731 </span>                :<span class="lineNoCov">          0 :     newoff = PageAddItem(page, (Item) heaptup-&gt;t_data, heaptup-&gt;t_len,</span>
+<span class="lineNum">     732 </span>                :            :                          InvalidOffsetNumber, false, true);
+<span class="lineNum">     733 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (newoff == InvalidOffsetNumber)</span>
+<span class="lineNum">     734 </span>                :<span class="lineNoCov">          0 :         elog(ERROR, &quot;failed to add tuple&quot;);</span>
+<span class="lineNum">     735 </span>                :            : 
+<span class="lineNum">     736 </span>                :            :     /* Update caller's t_self to the actual position where it was stored */
+<span class="lineNum">     737 </span>                :<span class="lineNoCov">          0 :     ItemPointerSet(&amp;(tup-&gt;t_self), state-&gt;rs_blockno, newoff);</span>
+<span class="lineNum">     738 </span>                :            : 
+<span class="lineNum">     739 </span>                :            :     /*
+<span class="lineNum">     740 </span>                :            :      * Insert the correct position into CTID of the stored tuple, too, if the
+<span class="lineNum">     741 </span>                :            :      * caller didn't supply a valid CTID.
+<span class="lineNum">     742 </span>                :            :      */
+<span class="lineNum">     743 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!ItemPointerIsValid(&amp;tup-&gt;t_data-&gt;t_ctid))</span>
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>]
+<span class="lineNum">     744 </span>                :            :     {
+<span class="lineNum">     745 </span>                :            :         ItemId      newitemid;
+<span class="lineNum">     746 </span>                :            :         HeapTupleHeader onpage_tup;
+<span class="lineNum">     747 </span>                :            : 
+<span class="lineNum">     748 </span>                :<span class="lineNoCov">          0 :         newitemid = PageGetItemId(page, newoff);</span>
+<span class="lineNum">     749 </span>                :<span class="lineNoCov">          0 :         onpage_tup = (HeapTupleHeader) PageGetItem(page, newitemid);</span>
+<span class="lineNum">     750 </span>                :            : 
+<span class="lineNum">     751 </span>                :<span class="lineNoCov">          0 :         onpage_tup-&gt;t_ctid = tup-&gt;t_self;</span>
+<span class="lineNum">     752 </span>                :            :     }
+<span class="lineNum">     753 </span>                :            : 
+<span class="lineNum">     754 </span>                :            :     /* If heaptup is a private copy, release it. */
+<span class="lineNum">     755 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (heaptup != tup)</span>
+<span class="lineNum">     756 </span>                :<span class="lineNoCov">          0 :         heap_freetuple(heaptup);</span>
+<span class="lineNum">     757 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     758 </span>                :            : 
+<span class="lineNum">     759 </span>                :            : /* ------------------------------------------------------------------------
+<span class="lineNum">     760 </span>                :            :  * Logical rewrite support
+<span class="lineNum">     761 </span>                :            :  *
+<span class="lineNum">     762 </span>                :            :  * When doing logical decoding - which relies on using cmin/cmax of catalog
+<span class="lineNum">     763 </span>                :            :  * tuples, via xl_heap_new_cid records - heap rewrites have to log enough
+<span class="lineNum">     764 </span>                :            :  * information to allow the decoding backend to updates its internal mapping
+<span class="lineNum">     765 </span>                :            :  * of (relfilenode,ctid) =&gt; (cmin, cmax) to be correct for the rewritten heap.
+<span class="lineNum">     766 </span>                :            :  *
+<span class="lineNum">     767 </span>                :            :  * For that, every time we find a tuple that's been modified in a catalog
+<span class="lineNum">     768 </span>                :            :  * relation within the xmin horizon of any decoding slot, we log a mapping
+<span class="lineNum">     769 </span>                :            :  * from the old to the new location.
+<span class="lineNum">     770 </span>                :            :  *
+<span class="lineNum">     771 </span>                :            :  * To deal with rewrites that abort the filename of a mapping file contains
+<span class="lineNum">     772 </span>                :            :  * the xid of the transaction performing the rewrite, which then can be
+<span class="lineNum">     773 </span>                :            :  * checked before being read in.
+<span class="lineNum">     774 </span>                :            :  *
+<span class="lineNum">     775 </span>                :            :  * For efficiency we don't immediately spill every single map mapping for a
+<span class="lineNum">     776 </span>                :            :  * row to disk but only do so in batches when we've collected several of them
+<span class="lineNum">     777 </span>                :            :  * in memory or when end_heap_rewrite() has been called.
+<span class="lineNum">     778 </span>                :            :  *
+<span class="lineNum">     779 </span>                :            :  * Crash-Safety: This module diverts from the usual patterns of doing WAL
+<span class="lineNum">     780 </span>                :            :  * since it cannot rely on checkpoint flushing out all buffers and thus
+<span class="lineNum">     781 </span>                :            :  * waiting for exclusive locks on buffers. Usually the XLogInsert() covering
+<span class="lineNum">     782 </span>                :            :  * buffer modifications is performed while the buffer(s) that are being
+<span class="lineNum">     783 </span>                :            :  * modified are exclusively locked guaranteeing that both the WAL record and
+<span class="lineNum">     784 </span>                :            :  * the modified heap are on either side of the checkpoint. But since the
+<span class="lineNum">     785 </span>                :            :  * mapping files we log aren't in shared_buffers that interlock doesn't work.
+<span class="lineNum">     786 </span>                :            :  *
+<span class="lineNum">     787 </span>                :            :  * Instead we simply write the mapping files out to disk, *before* the
+<span class="lineNum">     788 </span>                :            :  * XLogInsert() is performed. That guarantees that either the XLogInsert() is
+<span class="lineNum">     789 </span>                :            :  * inserted after the checkpoint's redo pointer or that the checkpoint (via
+<span class="lineNum">     790 </span>                :            :  * LogicalRewriteHeapCheckpoint()) has flushed the (partial) mapping file to
+<span class="lineNum">     791 </span>                :            :  * disk. That leaves the tail end that has not yet been flushed open to
+<span class="lineNum">     792 </span>                :            :  * corruption, which is solved by including the current offset in the
+<span class="lineNum">     793 </span>                :            :  * xl_heap_rewrite_mapping records and truncating the mapping file to it
+<span class="lineNum">     794 </span>                :            :  * during replay. Every time a rewrite is finished all generated mapping files
+<span class="lineNum">     795 </span>                :            :  * are synced to disk.
+<span class="lineNum">     796 </span>                :            :  *
+<span class="lineNum">     797 </span>                :            :  * Note that if we were only concerned about crash safety we wouldn't have to
+<span class="lineNum">     798 </span>                :            :  * deal with WAL logging at all - an fsync() at the end of a rewrite would be
+<span class="lineNum">     799 </span>                :            :  * sufficient for crash safety. Any mapping that hasn't been safely flushed to
+<span class="lineNum">     800 </span>                :            :  * disk has to be by an aborted (explicitly or via a crash) transaction and is
+<span class="lineNum">     801 </span>                :            :  * ignored by virtue of the xid in its name being subject to a
+<span class="lineNum">     802 </span>                :            :  * TransactionDidCommit() check. But we want to support having standbys via
+<span class="lineNum">     803 </span>                :            :  * physical replication, both for availability and to do logical decoding
+<span class="lineNum">     804 </span>                :            :  * there.
+<span class="lineNum">     805 </span>                :            :  * ------------------------------------------------------------------------
+<span class="lineNum">     806 </span>                :            :  */
+<span class="lineNum">     807 </span>                :            : 
+<span class="lineNum">     808 </span>                :            : /*
+<span class="lineNum">     809 </span>                :            :  * Do preparations for logging logical mappings during a rewrite if
+<span class="lineNum">     810 </span>                :            :  * necessary. If we detect that we don't need to log anything we'll prevent
+<span class="lineNum">     811 </span>                :            :  * any further action by the various logical rewrite functions.
+<a name="812"><span class="lineNum">     812 </span>                :            :  */</a>
+<span class="lineNum">     813 </span>                :            : static void
+<span class="lineNum">     814 </span>                :<span class="lineNoCov">          0 : logical_begin_heap_rewrite(RewriteState state)</span>
+<span class="lineNum">     815 </span>                :            : {
+<span class="lineNum">     816 </span>                :            :     HASHCTL     hash_ctl;
+<span class="lineNum">     817 </span>                :            :     TransactionId logical_xmin;
+<span class="lineNum">     818 </span>                :            : 
+<span class="lineNum">     819 </span>                :            :     /*
+<span class="lineNum">     820 </span>                :            :      * We only need to persist these mappings if the rewritten table can be
+<span class="lineNum">     821 </span>                :            :      * accessed during logical decoding, if not, we can skip doing any
+<span class="lineNum">     822 </span>                :            :      * additional work.
+<span class="lineNum">     823 </span>                :            :      */
+<span class="lineNum">     824 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_logical_rewrite =</span>
+<span class="lineNum">     825 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         RelationIsAccessibleInLogicalDecoding(state-&gt;rs_old_rel);</span>
+<span class="lineNum">         </span>[<span class="branchNoExec" title="Branch 5 was not executed"> # </span><span class="branchNoExec" title="Branch 6 was not executed"> # </span>][<span class="branchNoExec" title="Branch 7 was not executed"> # </span><span class="branchNoExec" title="Branch 8 was not executed"> # </span>]
+<span class="lineNum">         </span>[<span class="branchNoExec" title="Branch 9 was not executed"> # </span><span class="branchNoExec" title="Branch 10 was not executed"> # </span>][<span class="branchNoExec" title="Branch 11 was not executed"> # </span><span class="branchNoExec" title="Branch 12 was not executed"> # </span>]
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 13 was not executed"> # </span><span class="branchNoExec" title="Branch 14 was not executed"> # </span>]
+<span class="lineNum">     826 </span>                :            : 
+<span class="lineNum">     827 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!state-&gt;rs_logical_rewrite)</span>
+<span class="lineNum">     828 </span>                :<span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     829 </span>                :            : 
+<span class="lineNum">     830 </span>                :<span class="lineNoCov">          0 :     ProcArrayGetReplicationSlotXmin(NULL, &amp;logical_xmin);</span>
+<span class="lineNum">     831 </span>                :            : 
+<span class="lineNum">     832 </span>                :            :     /*
+<span class="lineNum">     833 </span>                :            :      * If there are no logical slots in progress we don't need to do anything,
+<span class="lineNum">     834 </span>                :            :      * there cannot be any remappings for relevant rows yet. The relation's
+<span class="lineNum">     835 </span>                :            :      * lock protects us against races.
+<span class="lineNum">     836 </span>                :            :      */
+<span class="lineNum">     837 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (logical_xmin == InvalidTransactionId)</span>
+<span class="lineNum">     838 </span>                :            :     {
+<span class="lineNum">     839 </span>                :<span class="lineNoCov">          0 :         state-&gt;rs_logical_rewrite = false;</span>
+<span class="lineNum">     840 </span>                :<span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     841 </span>                :            :     }
+<span class="lineNum">     842 </span>                :            : 
+<span class="lineNum">     843 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_logical_xmin = logical_xmin;</span>
+<span class="lineNum">     844 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_begin_lsn = GetXLogInsertRecPtr();</span>
+<span class="lineNum">     845 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_num_rewrite_mappings = 0;</span>
+<span class="lineNum">     846 </span>                :            : 
+<span class="lineNum">     847 </span>                :<span class="lineNoCov">          0 :     memset(&amp;hash_ctl, 0, sizeof(hash_ctl));</span>
+<span class="lineNum">     848 </span>                :<span class="lineNoCov">          0 :     hash_ctl.keysize = sizeof(TransactionId);</span>
+<span class="lineNum">     849 </span>                :<span class="lineNoCov">          0 :     hash_ctl.entrysize = sizeof(RewriteMappingFile);</span>
+<span class="lineNum">     850 </span>                :<span class="lineNoCov">          0 :     hash_ctl.hcxt = state-&gt;rs_cxt;</span>
+<span class="lineNum">     851 </span>                :            : 
+<span class="lineNum">     852 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_logical_mappings =</span>
+<span class="lineNum">     853 </span>                :<span class="lineNoCov">          0 :         hash_create(&quot;Logical rewrite mapping&quot;,</span>
+<span class="lineNum">     854 </span>                :            :                     128,        /* arbitrary initial size */
+<span class="lineNum">     855 </span>                :            :                     &amp;hash_ctl,
+<span class="lineNum">     856 </span>                :            :                     HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+<span class="lineNum">     857 </span>                :            : }
+<span class="lineNum">     858 </span>                :            : 
+<span class="lineNum">     859 </span>                :            : /*
+<span class="lineNum">     860 </span>                :            :  * Flush all logical in-memory mappings to disk, but don't fsync them yet.
+<a name="861"><span class="lineNum">     861 </span>                :            :  */</a>
+<span class="lineNum">     862 </span>                :            : static void
+<span class="lineNum">     863 </span>                :<span class="lineNoCov">          0 : logical_heap_rewrite_flush_mappings(RewriteState state)</span>
+<span class="lineNum">     864 </span>                :            : {
+<span class="lineNum">     865 </span>                :            :     HASH_SEQ_STATUS seq_status;
+<span class="lineNum">     866 </span>                :            :     RewriteMappingFile *src;
+<span class="lineNum">     867 </span>                :            :     dlist_mutable_iter iter;
+<span class="lineNum">     868 </span>                :            : 
+<span class="lineNum">     869 </span>                :            :     Assert(state-&gt;rs_logical_rewrite);
+<span class="lineNum">     870 </span>                :            : 
+<span class="lineNum">     871 </span>                :            :     /* no logical rewrite in progress, no need to iterate over mappings */
+<span class="lineNum">     872 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (state-&gt;rs_num_rewrite_mappings == 0)</span>
+<span class="lineNum">     873 </span>                :<span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     874 </span>                :            : 
+<span class="lineNum">     875 </span>                :<span class="lineNoCov">          0 :     elog(DEBUG1, &quot;flushing %u logical rewrite mapping entries&quot;,</span>
+<span class="lineNum">     876 </span>                :            :          state-&gt;rs_num_rewrite_mappings);
+<span class="lineNum">     877 </span>                :            : 
+<span class="lineNum">     878 </span>                :<span class="lineNoCov">          0 :     hash_seq_init(&amp;seq_status, state-&gt;rs_logical_mappings);</span>
+<span class="lineNum">     879 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     while ((src = (RewriteMappingFile *) hash_seq_search(&amp;seq_status)) != NULL)</span>
+<span class="lineNum">     880 </span>                :            :     {
+<span class="lineNum">     881 </span>                :            :         char       *waldata;
+<span class="lineNum">     882 </span>                :            :         char       *waldata_start;
+<span class="lineNum">     883 </span>                :            :         xl_heap_rewrite_mapping xlrec;
+<span class="lineNum">     884 </span>                :            :         Oid         dboid;
+<span class="lineNum">     885 </span>                :            :         uint32      len;
+<span class="lineNum">     886 </span>                :            :         int         written;
+<span class="lineNum">     887 </span>                :            : 
+<span class="lineNum">     888 </span>                :            :         /* this file hasn't got any new mappings */
+<span class="lineNum">     889 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (src-&gt;num_mappings == 0)</span>
+<span class="lineNum">     890 </span>                :<span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     891 </span>                :            : 
+<span class="lineNum">     892 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (state-&gt;rs_old_rel-&gt;rd_rel-&gt;relisshared)</span>
+<span class="lineNum">     893 </span>                :<span class="lineNoCov">          0 :             dboid = InvalidOid;</span>
+<span class="lineNum">     894 </span>                :            :         else
+<span class="lineNum">     895 </span>                :<span class="lineNoCov">          0 :             dboid = MyDatabaseId;</span>
+<span class="lineNum">     896 </span>                :            : 
+<span class="lineNum">     897 </span>                :<span class="lineNoCov">          0 :         xlrec.num_mappings = src-&gt;num_mappings;</span>
+<span class="lineNum">     898 </span>                :<span class="lineNoCov">          0 :         xlrec.mapped_rel = RelationGetRelid(state-&gt;rs_old_rel);</span>
+<span class="lineNum">     899 </span>                :<span class="lineNoCov">          0 :         xlrec.mapped_xid = src-&gt;xid;</span>
+<span class="lineNum">     900 </span>                :<span class="lineNoCov">          0 :         xlrec.mapped_db = dboid;</span>
+<span class="lineNum">     901 </span>                :<span class="lineNoCov">          0 :         xlrec.offset = src-&gt;off;</span>
+<span class="lineNum">     902 </span>                :<span class="lineNoCov">          0 :         xlrec.start_lsn = state-&gt;rs_begin_lsn;</span>
+<span class="lineNum">     903 </span>                :            : 
+<span class="lineNum">     904 </span>                :            :         /* write all mappings consecutively */
+<span class="lineNum">     905 </span>                :<span class="lineNoCov">          0 :         len = src-&gt;num_mappings * sizeof(LogicalRewriteMappingData);</span>
+<span class="lineNum">     906 </span>                :<span class="lineNoCov">          0 :         waldata_start = waldata = palloc(len);</span>
+<span class="lineNum">     907 </span>                :            : 
+<span class="lineNum">     908 </span>                :            :         /*
+<span class="lineNum">     909 </span>                :            :          * collect data we need to write out, but don't modify ondisk data yet
+<span class="lineNum">     910 </span>                :            :          */
+<span class="lineNum">     911 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         dlist_foreach_modify(iter, &amp;src-&gt;mappings)</span>
+<span class="lineNum">     912 </span>                :            :         {
+<span class="lineNum">     913 </span>                :            :             RewriteMappingDataEntry *pmap;
+<span class="lineNum">     914 </span>                :            : 
+<span class="lineNum">     915 </span>                :<span class="lineNoCov">          0 :             pmap = dlist_container(RewriteMappingDataEntry, node, iter.cur);</span>
+<span class="lineNum">     916 </span>                :            : 
+<span class="lineNum">     917 </span>                :<span class="lineNoCov">          0 :             memcpy(waldata, &amp;pmap-&gt;map, sizeof(pmap-&gt;map));</span>
+<span class="lineNum">     918 </span>                :<span class="lineNoCov">          0 :             waldata += sizeof(pmap-&gt;map);</span>
+<span class="lineNum">     919 </span>                :            : 
+<span class="lineNum">     920 </span>                :            :             /* remove from the list and free */
+<span class="lineNum">     921 </span>                :<span class="lineNoCov">          0 :             dlist_delete(&amp;pmap-&gt;node);</span>
+<span class="lineNum">     922 </span>                :<span class="lineNoCov">          0 :             pfree(pmap);</span>
+<span class="lineNum">     923 </span>                :            : 
+<span class="lineNum">     924 </span>                :            :             /* update bookkeeping */
+<span class="lineNum">     925 </span>                :<span class="lineNoCov">          0 :             state-&gt;rs_num_rewrite_mappings--;</span>
+<span class="lineNum">     926 </span>                :<span class="lineNoCov">          0 :             src-&gt;num_mappings--;</span>
+<span class="lineNum">     927 </span>                :            :         }
+<span class="lineNum">     928 </span>                :            : 
+<span class="lineNum">     929 </span>                :            :         Assert(src-&gt;num_mappings == 0);
+<span class="lineNum">     930 </span>                :            :         Assert(waldata == waldata_start + len);
+<span class="lineNum">     931 </span>                :            : 
+<span class="lineNum">     932 </span>                :            :         /*
+<span class="lineNum">     933 </span>                :            :          * Note that we deviate from the usual WAL coding practices here,
+<span class="lineNum">     934 </span>                :            :          * check the above &quot;Logical rewrite support&quot; comment for reasoning.
+<span class="lineNum">     935 </span>                :            :          */
+<span class="lineNum">     936 </span>                :<span class="lineNoCov">          0 :         written = FileWrite(src-&gt;vfd, waldata_start, len, src-&gt;off,</span>
+<span class="lineNum">     937 </span>                :            :                             WAIT_EVENT_LOGICAL_REWRITE_WRITE);
+<span class="lineNum">     938 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (written != len)</span>
+<span class="lineNum">     939 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :             ereport(ERROR,</span>
+<span class="lineNum">     940 </span>                :            :                     (errcode_for_file_access(),
+<span class="lineNum">     941 </span>                :            :                      errmsg(&quot;could not write to file \&quot;%s\&quot;, wrote %d of %d: %m&quot;, src-&gt;path,
+<span class="lineNum">     942 </span>                :            :                             written, len)));
+<span class="lineNum">     943 </span>                :<span class="lineNoCov">          0 :         src-&gt;off += len;</span>
+<span class="lineNum">     944 </span>                :            : 
+<span class="lineNum">     945 </span>                :<span class="lineNoCov">          0 :         XLogBeginInsert();</span>
+<span class="lineNum">     946 </span>                :<span class="lineNoCov">          0 :         XLogRegisterData((char *) (&amp;xlrec), sizeof(xlrec));</span>
+<span class="lineNum">     947 </span>                :<span class="lineNoCov">          0 :         XLogRegisterData(waldata_start, len);</span>
+<span class="lineNum">     948 </span>                :            : 
+<span class="lineNum">     949 </span>                :            :         /* write xlog record */
+<span class="lineNum">     950 </span>                :<span class="lineNoCov">          0 :         XLogInsert(RM_HEAP2_ID, XLOG_HEAP2_REWRITE);</span>
+<span class="lineNum">     951 </span>                :            : 
+<span class="lineNum">     952 </span>                :<span class="lineNoCov">          0 :         pfree(waldata_start);</span>
+<span class="lineNum">     953 </span>                :            :     }
+<span class="lineNum">     954 </span>                :            :     Assert(state-&gt;rs_num_rewrite_mappings == 0);
+<span class="lineNum">     955 </span>                :            : }
+<span class="lineNum">     956 </span>                :            : 
+<span class="lineNum">     957 </span>                :            : /*
+<span class="lineNum">     958 </span>                :            :  * Logical remapping part of end_heap_rewrite().
+<a name="959"><span class="lineNum">     959 </span>                :            :  */</a>
+<span class="lineNum">     960 </span>                :            : static void
+<span class="lineNum">     961 </span>                :<span class="lineNoCov">          0 : logical_end_heap_rewrite(RewriteState state)</span>
+<span class="lineNum">     962 </span>                :            : {
+<span class="lineNum">     963 </span>                :            :     HASH_SEQ_STATUS seq_status;
+<span class="lineNum">     964 </span>                :            :     RewriteMappingFile *src;
+<span class="lineNum">     965 </span>                :            : 
+<span class="lineNum">     966 </span>                :            :     /* done, no logical rewrite in progress */
+<span class="lineNum">     967 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!state-&gt;rs_logical_rewrite)</span>
+<span class="lineNum">     968 </span>                :<span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     969 </span>                :            : 
+<span class="lineNum">     970 </span>                :            :     /* writeout remaining in-memory entries */
+<span class="lineNum">     971 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (state-&gt;rs_num_rewrite_mappings &gt; 0)</span>
+<span class="lineNum">     972 </span>                :<span class="lineNoCov">          0 :         logical_heap_rewrite_flush_mappings(state);</span>
+<span class="lineNum">     973 </span>                :            : 
+<span class="lineNum">     974 </span>                :            :     /* Iterate over all mappings we have written and fsync the files. */
+<span class="lineNum">     975 </span>                :<span class="lineNoCov">          0 :     hash_seq_init(&amp;seq_status, state-&gt;rs_logical_mappings);</span>
+<span class="lineNum">     976 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     while ((src = (RewriteMappingFile *) hash_seq_search(&amp;seq_status)) != NULL)</span>
+<span class="lineNum">     977 </span>                :            :     {
+<span class="lineNum">     978 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (FileSync(src-&gt;vfd, WAIT_EVENT_LOGICAL_REWRITE_SYNC) != 0)</span>
+<span class="lineNum">     979 </span>        [<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :             ereport(data_sync_elevel(ERROR),</span>
+<span class="lineNum">     980 </span>                :            :                     (errcode_for_file_access(),
+<span class="lineNum">     981 </span>                :            :                      errmsg(&quot;could not fsync file \&quot;%s\&quot;: %m&quot;, src-&gt;path)));
+<span class="lineNum">     982 </span>                :<span class="lineNoCov">          0 :         FileClose(src-&gt;vfd);</span>
+<span class="lineNum">     983 </span>                :            :     }
+<span class="lineNum">     984 </span>                :            :     /* memory context cleanup will deal with the rest */
+<span class="lineNum">     985 </span>                :            : }
+<span class="lineNum">     986 </span>                :            : 
+<span class="lineNum">     987 </span>                :            : /*
+<span class="lineNum">     988 </span>                :            :  * Log a single (old-&gt;new) mapping for 'xid'.
+<a name="989"><span class="lineNum">     989 </span>                :            :  */</a>
+<span class="lineNum">     990 </span>                :            : static void
+<span class="lineNum">     991 </span>                :<span class="lineNoCov">          0 : logical_rewrite_log_mapping(RewriteState state, TransactionId xid,</span>
+<span class="lineNum">     992 </span>                :            :                             LogicalRewriteMappingData *map)
+<span class="lineNum">     993 </span>                :            : {
+<span class="lineNum">     994 </span>                :            :     RewriteMappingFile *src;
+<span class="lineNum">     995 </span>                :            :     RewriteMappingDataEntry *pmap;
+<span class="lineNum">     996 </span>                :            :     Oid         relid;
+<span class="lineNum">     997 </span>                :            :     bool        found;
+<span class="lineNum">     998 </span>                :            : 
+<span class="lineNum">     999 </span>                :<span class="lineNoCov">          0 :     relid = RelationGetRelid(state-&gt;rs_old_rel);</span>
+<span class="lineNum">    1000 </span>                :            : 
+<span class="lineNum">    1001 </span>                :            :     /* look for existing mappings for this 'mapped' xid */
+<span class="lineNum">    1002 </span>                :<span class="lineNoCov">          0 :     src = hash_search(state-&gt;rs_logical_mappings, &amp;xid,</span>
+<span class="lineNum">    1003 </span>                :            :                       HASH_ENTER, &amp;found);
+<span class="lineNum">    1004 </span>                :            : 
+<span class="lineNum">    1005 </span>                :            :     /*
+<span class="lineNum">    1006 </span>                :            :      * We haven't yet had the need to map anything for this xid, create
+<span class="lineNum">    1007 </span>                :            :      * per-xid data structures.
+<span class="lineNum">    1008 </span>                :            :      */
+<span class="lineNum">    1009 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!found)</span>
+<span class="lineNum">    1010 </span>                :            :     {
+<span class="lineNum">    1011 </span>                :            :         char        path[MAXPGPATH];
+<span class="lineNum">    1012 </span>                :            :         Oid         dboid;
+<span class="lineNum">    1013 </span>                :            : 
+<span class="lineNum">    1014 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (state-&gt;rs_old_rel-&gt;rd_rel-&gt;relisshared)</span>
+<span class="lineNum">    1015 </span>                :<span class="lineNoCov">          0 :             dboid = InvalidOid;</span>
+<span class="lineNum">    1016 </span>                :            :         else
+<span class="lineNum">    1017 </span>                :<span class="lineNoCov">          0 :             dboid = MyDatabaseId;</span>
+<span class="lineNum">    1018 </span>                :            : 
+<span class="lineNum">    1019 </span>                :<span class="lineNoCov">          0 :         snprintf(path, MAXPGPATH,</span>
+<span class="lineNum">    1020 </span>                :            :                  &quot;pg_logical/mappings/&quot; LOGICAL_REWRITE_FORMAT,
+<span class="lineNum">    1021 </span>                :            :                  dboid, relid,
+<span class="lineNum">    1022 </span>                :<span class="lineNoCov">          0 :                  (uint32) (state-&gt;rs_begin_lsn &gt;&gt; 32),</span>
+<span class="lineNum">    1023 </span>                :<span class="lineNoCov">          0 :                  (uint32) state-&gt;rs_begin_lsn,</span>
+<span class="lineNum">    1024 </span>                :            :                  xid, GetCurrentTransactionId());
+<span class="lineNum">    1025 </span>                :            : 
+<span class="lineNum">    1026 </span>                :<span class="lineNoCov">          0 :         dlist_init(&amp;src-&gt;mappings);</span>
+<span class="lineNum">    1027 </span>                :<span class="lineNoCov">          0 :         src-&gt;num_mappings = 0;</span>
+<span class="lineNum">    1028 </span>                :<span class="lineNoCov">          0 :         src-&gt;off = 0;</span>
+<span class="lineNum">    1029 </span>                :<span class="lineNoCov">          0 :         memcpy(src-&gt;path, path, sizeof(path));</span>
+<span class="lineNum">    1030 </span>                :<span class="lineNoCov">          0 :         src-&gt;vfd = PathNameOpenFile(path,</span>
+<span class="lineNum">    1031 </span>                :            :                                     O_CREAT | O_EXCL | O_WRONLY | PG_BINARY);
+<span class="lineNum">    1032 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (src-&gt;vfd &lt; 0)</span>
+<span class="lineNum">    1033 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :             ereport(ERROR,</span>
+<span class="lineNum">    1034 </span>                :            :                     (errcode_for_file_access(),
+<span class="lineNum">    1035 </span>                :            :                      errmsg(&quot;could not create file \&quot;%s\&quot;: %m&quot;, path)));
+<span class="lineNum">    1036 </span>                :            :     }
+<span class="lineNum">    1037 </span>                :            : 
+<span class="lineNum">    1038 </span>                :<span class="lineNoCov">          0 :     pmap = MemoryContextAlloc(state-&gt;rs_cxt,</span>
+<span class="lineNum">    1039 </span>                :            :                               sizeof(RewriteMappingDataEntry));
+<span class="lineNum">    1040 </span>                :<span class="lineNoCov">          0 :     memcpy(&amp;pmap-&gt;map, map, sizeof(LogicalRewriteMappingData));</span>
+<span class="lineNum">    1041 </span>                :<span class="lineNoCov">          0 :     dlist_push_tail(&amp;src-&gt;mappings, &amp;pmap-&gt;node);</span>
+<span class="lineNum">    1042 </span>                :<span class="lineNoCov">          0 :     src-&gt;num_mappings++;</span>
+<span class="lineNum">    1043 </span>                :<span class="lineNoCov">          0 :     state-&gt;rs_num_rewrite_mappings++;</span>
+<span class="lineNum">    1044 </span>                :            : 
+<span class="lineNum">    1045 </span>                :            :     /*
+<span class="lineNum">    1046 </span>                :            :      * Write out buffer every time we've too many in-memory entries across all
+<span class="lineNum">    1047 </span>                :            :      * mapping files.
+<span class="lineNum">    1048 </span>                :            :      */
+<span class="lineNum">    1049 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (state-&gt;rs_num_rewrite_mappings &gt;= 1000 /* arbitrary number */ )</span>
+<span class="lineNum">    1050 </span>                :<span class="lineNoCov">          0 :         logical_heap_rewrite_flush_mappings(state);</span>
+<span class="lineNum">    1051 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">    1052 </span>                :            : 
+<span class="lineNum">    1053 </span>                :            : /*
+<span class="lineNum">    1054 </span>                :            :  * Perform logical remapping for a tuple that's mapped from old_tid to
+<span class="lineNum">    1055 </span>                :            :  * new_tuple-&gt;t_self by rewrite_heap_tuple() if necessary for the tuple.
+<a name="1056"><span class="lineNum">    1056 </span>                :            :  */</a>
+<span class="lineNum">    1057 </span>                :            : static void
+<span class="lineNum">    1058 </span>                :<span class="lineNoCov">          0 : logical_rewrite_heap_tuple(RewriteState state, ItemPointerData old_tid,</span>
+<span class="lineNum">    1059 </span>                :            :                            HeapTuple new_tuple)
+<span class="lineNum">    1060 </span>                :            : {
+<span class="lineNum">    1061 </span>                :<span class="lineNoCov">          0 :     ItemPointerData new_tid = new_tuple-&gt;t_self;</span>
+<span class="lineNum">    1062 </span>                :<span class="lineNoCov">          0 :     TransactionId cutoff = state-&gt;rs_logical_xmin;</span>
+<span class="lineNum">    1063 </span>                :            :     TransactionId xmin;
+<span class="lineNum">    1064 </span>                :            :     TransactionId xmax;
+<span class="lineNum">    1065 </span>                :<span class="lineNoCov">          0 :     bool        do_log_xmin = false;</span>
+<span class="lineNum">    1066 </span>                :<span class="lineNoCov">          0 :     bool        do_log_xmax = false;</span>
+<span class="lineNum">    1067 </span>                :            :     LogicalRewriteMappingData map;
+<span class="lineNum">    1068 </span>                :            : 
+<span class="lineNum">    1069 </span>                :            :     /* no logical rewrite in progress, we don't need to log anything */
+<span class="lineNum">    1070 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!state-&gt;rs_logical_rewrite)</span>
+<span class="lineNum">    1071 </span>                :<span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">    1072 </span>                :            : 
+<span class="lineNum">    1073 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     xmin = HeapTupleHeaderGetXmin(new_tuple-&gt;t_data);</span>
+<span class="lineNum">    1074 </span>                :            :     /* use *GetUpdateXid to correctly deal with multixacts */
+<span class="lineNum">    1075 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :     xmax = HeapTupleHeaderGetUpdateXid(new_tuple-&gt;t_data);</span>
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>]
+<span class="lineNum">    1076 </span>                :            : 
+<span class="lineNum">    1077 </span>                :            :     /*
+<span class="lineNum">    1078 </span>                :            :      * Log the mapping iff the tuple has been created recently.
+<span class="lineNum">    1079 </span>                :            :      */
+<span class="lineNum">    1080 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 3 was not executed"> # </span><span class="branchNoExec" title="Branch 4 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (TransactionIdIsNormal(xmin) &amp;&amp; !TransactionIdPrecedes(xmin, cutoff))</span>
+<span class="lineNum">    1081 </span>                :<span class="lineNoCov">          0 :         do_log_xmin = true;</span>
+<span class="lineNum">    1082 </span>                :            : 
+<span class="lineNum">    1083 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!TransactionIdIsNormal(xmax))</span>
+<span class="lineNum">    1084 </span>                :            :     {
+<span class="lineNum">    1085 </span>                :            :         /*
+<span class="lineNum">    1086 </span>                :            :          * no xmax is set, can't have any permanent ones, so this check is
+<span class="lineNum">    1087 </span>                :            :          * sufficient
+<span class="lineNum">    1088 </span>                :            :          */
+<span class="lineNum">    1089 </span>                :            :     }
+<span class="lineNum">    1090 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :     else if (HEAP_XMAX_IS_LOCKED_ONLY(new_tuple-&gt;t_data-&gt;t_infomask))</span>
+<span class="lineNum">    1091 </span>                :            :     {
+<span class="lineNum">    1092 </span>                :            :         /* only locked, we don't care */
+<span class="lineNum">    1093 </span>                :            :     }
+<span class="lineNum">    1094 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     else if (!TransactionIdPrecedes(xmax, cutoff))</span>
+<span class="lineNum">    1095 </span>                :            :     {
+<span class="lineNum">    1096 </span>                :            :         /* tuple has been deleted recently, log */
+<span class="lineNum">    1097 </span>                :<span class="lineNoCov">          0 :         do_log_xmax = true;</span>
+<span class="lineNum">    1098 </span>                :            :     }
+<span class="lineNum">    1099 </span>                :            : 
+<span class="lineNum">    1100 </span>                :            :     /* if neither needs to be logged, we're done */
+<span class="lineNum">    1101 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!do_log_xmin &amp;&amp; !do_log_xmax)</span>
+<span class="lineNum">    1102 </span>                :<span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">    1103 </span>                :            : 
+<span class="lineNum">    1104 </span>                :            :     /* fill out mapping information */
+<span class="lineNum">    1105 </span>                :<span class="lineNoCov">          0 :     map.old_node = state-&gt;rs_old_rel-&gt;rd_node;</span>
+<span class="lineNum">    1106 </span>                :<span class="lineNoCov">          0 :     map.old_tid = old_tid;</span>
+<span class="lineNum">    1107 </span>                :<span class="lineNoCov">          0 :     map.new_node = state-&gt;rs_new_rel-&gt;rd_node;</span>
+<span class="lineNum">    1108 </span>                :<span class="lineNoCov">          0 :     map.new_tid = new_tid;</span>
+<span class="lineNum">    1109 </span>                :            : 
+<span class="lineNum">    1110 </span>                :            :     /* ---
+<span class="lineNum">    1111 </span>                :            :      * Now persist the mapping for the individual xids that are affected. We
+<span class="lineNum">    1112 </span>                :            :      * need to log for both xmin and xmax if they aren't the same transaction
+<span class="lineNum">    1113 </span>                :            :      * since the mapping files are per &quot;affected&quot; xid.
+<span class="lineNum">    1114 </span>                :            :      * We don't muster all that much effort detecting whether xmin and xmax
+<span class="lineNum">    1115 </span>                :            :      * are actually the same transaction, we just check whether the xid is the
+<span class="lineNum">    1116 </span>                :            :      * same disregarding subtransactions. Logging too much is relatively
+<span class="lineNum">    1117 </span>                :            :      * harmless and we could never do the check fully since subtransaction
+<span class="lineNum">    1118 </span>                :            :      * data is thrown away during restarts.
+<span class="lineNum">    1119 </span>                :            :      * ---
+<span class="lineNum">    1120 </span>                :            :      */
+<span class="lineNum">    1121 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (do_log_xmin)</span>
+<span class="lineNum">    1122 </span>                :<span class="lineNoCov">          0 :         logical_rewrite_log_mapping(state, xmin, &amp;map);</span>
+<span class="lineNum">    1123 </span>                :            :     /* separately log mapping for xmax unless it'd be redundant */
+<span class="lineNum">    1124 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (do_log_xmax &amp;&amp; !TransactionIdEquals(xmin, xmax))</span>
+<span class="lineNum">    1125 </span>                :<span class="lineNoCov">          0 :         logical_rewrite_log_mapping(state, xmax, &amp;map);</span>
+<span class="lineNum">    1126 </span>                :            : }
+<span class="lineNum">    1127 </span>                :            : 
+<span class="lineNum">    1128 </span>                :            : /*
+<span class="lineNum">    1129 </span>                :            :  * Replay XLOG_HEAP2_REWRITE records
+<a name="1130"><span class="lineNum">    1130 </span>                :            :  */</a>
+<span class="lineNum">    1131 </span>                :            : void
+<span class="lineNum">    1132 </span>                :<span class="lineNoCov">          0 : heap_xlog_logical_rewrite(XLogReaderState *r)</span>
+<span class="lineNum">    1133 </span>                :            : {
+<span class="lineNum">    1134 </span>                :            :     char        path[MAXPGPATH];
+<span class="lineNum">    1135 </span>                :            :     int         fd;
+<span class="lineNum">    1136 </span>                :            :     xl_heap_rewrite_mapping *xlrec;
+<span class="lineNum">    1137 </span>                :            :     uint32      len;
+<span class="lineNum">    1138 </span>                :            :     char       *data;
+<span class="lineNum">    1139 </span>                :            : 
+<span class="lineNum">    1140 </span>                :<span class="lineNoCov">          0 :     xlrec = (xl_heap_rewrite_mapping *) XLogRecGetData(r);</span>
+<span class="lineNum">    1141 </span>                :            : 
+<span class="lineNum">    1142 </span>                :<span class="lineNoCov">          0 :     snprintf(path, MAXPGPATH,</span>
+<span class="lineNum">    1143 </span>                :            :              &quot;pg_logical/mappings/&quot; LOGICAL_REWRITE_FORMAT,
+<span class="lineNum">    1144 </span>                :            :              xlrec-&gt;mapped_db, xlrec-&gt;mapped_rel,
+<span class="lineNum">    1145 </span>                :<span class="lineNoCov">          0 :              (uint32) (xlrec-&gt;start_lsn &gt;&gt; 32),</span>
+<span class="lineNum">    1146 </span>                :<span class="lineNoCov">          0 :              (uint32) xlrec-&gt;start_lsn,</span>
+<span class="lineNum">    1147 </span>                :<span class="lineNoCov">          0 :              xlrec-&gt;mapped_xid, XLogRecGetXid(r));</span>
+<span class="lineNum">    1148 </span>                :            : 
+<span class="lineNum">    1149 </span>                :<span class="lineNoCov">          0 :     fd = OpenTransientFile(path,</span>
+<span class="lineNum">    1150 </span>                :            :                            O_CREAT | O_WRONLY | PG_BINARY);
+<span class="lineNum">    1151 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (fd &lt; 0)</span>
+<span class="lineNum">    1152 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         ereport(ERROR,</span>
+<span class="lineNum">    1153 </span>                :            :                 (errcode_for_file_access(),
+<span class="lineNum">    1154 </span>                :            :                  errmsg(&quot;could not create file \&quot;%s\&quot;: %m&quot;, path)));
+<span class="lineNum">    1155 </span>                :            : 
+<span class="lineNum">    1156 </span>                :            :     /*
+<span class="lineNum">    1157 </span>                :            :      * Truncate all data that's not guaranteed to have been safely fsynced (by
+<span class="lineNum">    1158 </span>                :            :      * previous record or by the last checkpoint).
+<span class="lineNum">    1159 </span>                :            :      */
+<span class="lineNum">    1160 </span>                :<span class="lineNoCov">          0 :     pgstat_report_wait_start(WAIT_EVENT_LOGICAL_REWRITE_TRUNCATE);</span>
+<span class="lineNum">    1161 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (ftruncate(fd, xlrec-&gt;offset) != 0)</span>
+<span class="lineNum">    1162 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         ereport(ERROR,</span>
+<span class="lineNum">    1163 </span>                :            :                 (errcode_for_file_access(),
+<span class="lineNum">    1164 </span>                :            :                  errmsg(&quot;could not truncate file \&quot;%s\&quot; to %u: %m&quot;,
+<span class="lineNum">    1165 </span>                :            :                         path, (uint32) xlrec-&gt;offset)));
+<span class="lineNum">    1166 </span>                :<span class="lineNoCov">          0 :     pgstat_report_wait_end();</span>
+<span class="lineNum">    1167 </span>                :            : 
+<span class="lineNum">    1168 </span>                :            :     /* now seek to the position we want to write our data to */
+<span class="lineNum">    1169 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (lseek(fd, xlrec-&gt;offset, SEEK_SET) != xlrec-&gt;offset)</span>
+<span class="lineNum">    1170 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         ereport(ERROR,</span>
+<span class="lineNum">    1171 </span>                :            :                 (errcode_for_file_access(),
+<span class="lineNum">    1172 </span>                :            :                  errmsg(&quot;could not seek to end of file \&quot;%s\&quot;: %m&quot;,
+<span class="lineNum">    1173 </span>                :            :                         path)));
+<span class="lineNum">    1174 </span>                :            : 
+<span class="lineNum">    1175 </span>                :<span class="lineNoCov">          0 :     data = XLogRecGetData(r) + sizeof(*xlrec);</span>
+<span class="lineNum">    1176 </span>                :            : 
+<span class="lineNum">    1177 </span>                :<span class="lineNoCov">          0 :     len = xlrec-&gt;num_mappings * sizeof(LogicalRewriteMappingData);</span>
+<span class="lineNum">    1178 </span>                :            : 
+<span class="lineNum">    1179 </span>                :            :     /* write out tail end of mapping file (again) */
+<span class="lineNum">    1180 </span>                :<span class="lineNoCov">          0 :     errno = 0;</span>
+<span class="lineNum">    1181 </span>                :<span class="lineNoCov">          0 :     pgstat_report_wait_start(WAIT_EVENT_LOGICAL_REWRITE_MAPPING_WRITE);</span>
+<span class="lineNum">    1182 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (write(fd, data, len) != len)</span>
+<span class="lineNum">    1183 </span>                :            :     {
+<span class="lineNum">    1184 </span>                :            :         /* if write didn't set errno, assume problem is no disk space */
+<span class="lineNum">    1185 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (errno == 0)</span>
+<span class="lineNum">    1186 </span>                :<span class="lineNoCov">          0 :             errno = ENOSPC;</span>
+<span class="lineNum">    1187 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         ereport(ERROR,</span>
+<span class="lineNum">    1188 </span>                :            :                 (errcode_for_file_access(),
+<span class="lineNum">    1189 </span>                :            :                  errmsg(&quot;could not write to file \&quot;%s\&quot;: %m&quot;, path)));
+<span class="lineNum">    1190 </span>                :            :     }
+<span class="lineNum">    1191 </span>                :<span class="lineNoCov">          0 :     pgstat_report_wait_end();</span>
+<span class="lineNum">    1192 </span>                :            : 
+<span class="lineNum">    1193 </span>                :            :     /*
+<span class="lineNum">    1194 </span>                :            :      * Now fsync all previously written data. We could improve things and only
+<span class="lineNum">    1195 </span>                :            :      * do this for the last write to a file, but the required bookkeeping
+<span class="lineNum">    1196 </span>                :            :      * doesn't seem worth the trouble.
+<span class="lineNum">    1197 </span>                :            :      */
+<span class="lineNum">    1198 </span>                :<span class="lineNoCov">          0 :     pgstat_report_wait_start(WAIT_EVENT_LOGICAL_REWRITE_MAPPING_SYNC);</span>
+<span class="lineNum">    1199 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (pg_fsync(fd) != 0)</span>
+<span class="lineNum">    1200 </span>        [<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         ereport(data_sync_elevel(ERROR),</span>
+<span class="lineNum">    1201 </span>                :            :                 (errcode_for_file_access(),
+<span class="lineNum">    1202 </span>                :            :                  errmsg(&quot;could not fsync file \&quot;%s\&quot;: %m&quot;, path)));
+<span class="lineNum">    1203 </span>                :<span class="lineNoCov">          0 :     pgstat_report_wait_end();</span>
+<span class="lineNum">    1204 </span>                :            : 
+<span class="lineNum">    1205 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (CloseTransientFile(fd))</span>
+<span class="lineNum">    1206 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :         ereport(ERROR,</span>
+<span class="lineNum">    1207 </span>                :            :                 (errcode_for_file_access(),
+<span class="lineNum">    1208 </span>                :            :                  errmsg(&quot;could not close file \&quot;%s\&quot;: %m&quot;, path)));
+<span class="lineNum">    1209 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">    1210 </span>                :            : 
+<span class="lineNum">    1211 </span>                :            : /* ---
+<span class="lineNum">    1212 </span>                :            :  * Perform a checkpoint for logical rewrite mappings
+<span class="lineNum">    1213 </span>                :            :  *
+<span class="lineNum">    1214 </span>                :            :  * This serves two tasks:
+<span class="lineNum">    1215 </span>                :            :  * 1) Remove all mappings not needed anymore based on the logical restart LSN
+<span class="lineNum">    1216 </span>                :            :  * 2) Flush all remaining mappings to disk, so that replay after a checkpoint
+<span class="lineNum">    1217 </span>                :            :  *    only has to deal with the parts of a mapping that have been written out
+<span class="lineNum">    1218 </span>                :            :  *    after the checkpoint started.
+<span class="lineNum">    1219 </span>                :            :  * ---
+<a name="1220"><span class="lineNum">    1220 </span>                :            :  */</a>
+<span class="lineNum">    1221 </span>                :            : void
+<span class="lineNum">    1222 </span>                :<span class="lineCov">         76 : CheckPointLogicalRewriteHeap(void)</span>
+<span class="lineNum">    1223 </span>                :            : {
+<span class="lineNum">    1224 </span>                :            :     XLogRecPtr  cutoff;
+<span class="lineNum">    1225 </span>                :            :     XLogRecPtr  redo;
+<span class="lineNum">    1226 </span>                :            :     DIR        *mappings_dir;
+<span class="lineNum">    1227 </span>                :            :     struct dirent *mapping_de;
+<span class="lineNum">    1228 </span>                :            :     char        path[MAXPGPATH + 20];
+<span class="lineNum">    1229 </span>                :            : 
+<span class="lineNum">    1230 </span>                :            :     /*
+<span class="lineNum">    1231 </span>                :            :      * We start of with a minimum of the last redo pointer. No new decoding
+<span class="lineNum">    1232 </span>                :            :      * slot will start before that, so that's a safe upper bound for removal.
+<span class="lineNum">    1233 </span>                :            :      */
+<span class="lineNum">    1234 </span>                :<span class="lineCov">         76 :     redo = GetRedoRecPtr();</span>
+<span class="lineNum">    1235 </span>                :            : 
+<span class="lineNum">    1236 </span>                :            :     /* now check for the restart ptrs from existing slots */
+<span class="lineNum">    1237 </span>                :<span class="lineCov">         76 :     cutoff = ReplicationSlotsComputeLogicalRestartLSN();</span>
+<span class="lineNum">    1238 </span>                :            : 
+<span class="lineNum">    1239 </span>                :            :     /* don't start earlier than the restart lsn */
+<span class="lineNum">    1240 </span>[<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 76 times"> + </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineCov">         76 :     if (cutoff != InvalidXLogRecPtr &amp;&amp; redo &lt; cutoff)</span>
+<span class="lineNum">    1241 </span>                :<span class="lineNoCov">          0 :         cutoff = redo;</span>
+<span class="lineNum">    1242 </span>                :            : 
+<span class="lineNum">    1243 </span>                :<span class="lineCov">         76 :     mappings_dir = AllocateDir(&quot;pg_logical/mappings&quot;);</span>
+<span class="lineNum">    1244 </span>        [<span class="branchCov" title="Branch 1 was taken 152 times"> + </span><span class="branchCov" title="Branch 2 was taken 76 times"> + </span>]:<span class="lineCov">        228 :     while ((mapping_de = ReadDir(mappings_dir, &quot;pg_logical/mappings&quot;)) != NULL)</span>
+<span class="lineNum">    1245 </span>                :            :     {
+<span class="lineNum">    1246 </span>                :            :         struct stat statbuf;
+<span class="lineNum">    1247 </span>                :            :         Oid         dboid;
+<span class="lineNum">    1248 </span>                :            :         Oid         relid;
+<span class="lineNum">    1249 </span>                :            :         XLogRecPtr  lsn;
+<span class="lineNum">    1250 </span>                :            :         TransactionId rewrite_xid;
+<span class="lineNum">    1251 </span>                :            :         TransactionId create_xid;
+<span class="lineNum">    1252 </span>                :            :         uint32      hi,
+<span class="lineNum">    1253 </span>                :            :                     lo;
+<span class="lineNum">    1254 </span>                :            : 
+<span class="lineNum">    1255 </span>[<span class="branchCov" title="Branch 0 was taken 76 times"> + </span><span class="branchCov" title="Branch 1 was taken 76 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 76 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">        152 :         if (strcmp(mapping_de-&gt;d_name, &quot;.&quot;) == 0 ||</span>
+<span class="lineNum">    1256 </span>                :<span class="lineCov">         76 :             strcmp(mapping_de-&gt;d_name, &quot;..&quot;) == 0)</span>
+<span class="lineNum">    1257 </span>                :<span class="lineCov">        152 :             continue;</span>
+<span class="lineNum">    1258 </span>                :            : 
+<span class="lineNum">    1259 </span>                :<span class="lineNoCov">          0 :         snprintf(path, sizeof(path), &quot;pg_logical/mappings/%s&quot;, mapping_de-&gt;d_name);</span>
+<span class="lineNum">    1260 </span>[<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>][<span class="branchNoExec" title="Branch 3 was not executed"> # </span><span class="branchNoExec" title="Branch 4 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (lstat(path, &amp;statbuf) == 0 &amp;&amp; !S_ISREG(statbuf.st_mode))</span>
+<span class="lineNum">    1261 </span>                :<span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">    1262 </span>                :            : 
+<span class="lineNum">    1263 </span>                :            :         /* Skip over files that cannot be ours. */
+<span class="lineNum">    1264 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (strncmp(mapping_de-&gt;d_name, &quot;map-&quot;, 4) != 0)</span>
+<span class="lineNum">    1265 </span>                :<span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">    1266 </span>                :            : 
+<span class="lineNum">    1267 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (sscanf(mapping_de-&gt;d_name, LOGICAL_REWRITE_FORMAT,</span>
+<span class="lineNum">    1268 </span>                :            :                    &amp;dboid, &amp;relid, &amp;hi, &amp;lo, &amp;rewrite_xid, &amp;create_xid) != 6)
+<span class="lineNum">    1269 </span>                :<span class="lineNoCov">          0 :             elog(ERROR, &quot;could not parse filename \&quot;%s\&quot;&quot;, mapping_de-&gt;d_name);</span>
+<span class="lineNum">    1270 </span>                :            : 
+<span class="lineNum">    1271 </span>                :<span class="lineNoCov">          0 :         lsn = ((uint64) hi) &lt;&lt; 32 | lo;</span>
+<span class="lineNum">    1272 </span>                :            : 
+<span class="lineNum">    1273 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (lsn &lt; cutoff || cutoff == InvalidXLogRecPtr)</span>
+<span class="lineNum">    1274 </span>                :            :         {
+<span class="lineNum">    1275 </span>                :<span class="lineNoCov">          0 :             elog(DEBUG1, &quot;removing logical rewrite file \&quot;%s\&quot;&quot;, path);</span>
+<span class="lineNum">    1276 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (unlink(path) &lt; 0)</span>
+<span class="lineNum">    1277 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :                 ereport(ERROR,</span>
+<span class="lineNum">    1278 </span>                :            :                         (errcode_for_file_access(),
+<span class="lineNum">    1279 </span>                :            :                          errmsg(&quot;could not remove file \&quot;%s\&quot;: %m&quot;, path)));
+<span class="lineNum">    1280 </span>                :            :         }
+<span class="lineNum">    1281 </span>                :            :         else
+<span class="lineNum">    1282 </span>                :            :         {
+<span class="lineNum">    1283 </span>                :            :             /* on some operating systems fsyncing a file requires O_RDWR */
+<span class="lineNum">    1284 </span>                :<span class="lineNoCov">          0 :             int         fd = OpenTransientFile(path, O_RDWR | PG_BINARY);</span>
+<span class="lineNum">    1285 </span>                :            : 
+<span class="lineNum">    1286 </span>                :            :             /*
+<span class="lineNum">    1287 </span>                :            :              * The file cannot vanish due to concurrency since this function
+<span class="lineNum">    1288 </span>                :            :              * is the only one removing logical mappings and it's run while
+<span class="lineNum">    1289 </span>                :            :              * CheckpointLock is held exclusively.
+<span class="lineNum">    1290 </span>                :            :              */
+<span class="lineNum">    1291 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (fd &lt; 0)</span>
+<span class="lineNum">    1292 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :                 ereport(ERROR,</span>
+<span class="lineNum">    1293 </span>                :            :                         (errcode_for_file_access(),
+<span class="lineNum">    1294 </span>                :            :                          errmsg(&quot;could not open file \&quot;%s\&quot;: %m&quot;, path)));
+<span class="lineNum">    1295 </span>                :            : 
+<span class="lineNum">    1296 </span>                :            :             /*
+<span class="lineNum">    1297 </span>                :            :              * We could try to avoid fsyncing files that either haven't
+<span class="lineNum">    1298 </span>                :            :              * changed or have only been created since the checkpoint's start,
+<span class="lineNum">    1299 </span>                :            :              * but it's currently not deemed worth the effort.
+<span class="lineNum">    1300 </span>                :            :              */
+<span class="lineNum">    1301 </span>                :<span class="lineNoCov">          0 :             pgstat_report_wait_start(WAIT_EVENT_LOGICAL_REWRITE_CHECKPOINT_SYNC);</span>
+<span class="lineNum">    1302 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (pg_fsync(fd) != 0)</span>
+<span class="lineNum">    1303 </span>        [<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :                 ereport(data_sync_elevel(ERROR),</span>
+<span class="lineNum">    1304 </span>                :            :                         (errcode_for_file_access(),
+<span class="lineNum">    1305 </span>                :            :                          errmsg(&quot;could not fsync file \&quot;%s\&quot;: %m&quot;, path)));
+<span class="lineNum">    1306 </span>                :<span class="lineNoCov">          0 :             pgstat_report_wait_end();</span>
+<span class="lineNum">    1307 </span>                :            : 
+<span class="lineNum">    1308 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (CloseTransientFile(fd))</span>
+<span class="lineNum">    1309 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :                 ereport(ERROR,</span>
+<span class="lineNum">    1310 </span>                :            :                         (errcode_for_file_access(),
+<span class="lineNum">    1311 </span>                :            :                          errmsg(&quot;could not close file \&quot;%s\&quot;: %m&quot;, path)));
+<span class="lineNum">    1312 </span>                :            :         }
+<span class="lineNum">    1313 </span>                :            :     }
+<span class="lineNum">    1314 </span>                :<span class="lineCov">         76 :     FreeDir(mappings_dir);</span>
+<span class="lineNum">    1315 </span>                :<span class="lineCov">         76 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,776 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/access/heap/visibilitymap.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/access/heap</a> - visibilitymap.c<span style="font-size: 80%;"> (source / <a href="visibilitymap.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">104</td>
+            <td class="headerCovTableEntry">150</td>
+            <td class="headerCovTableEntryLo">69.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:34:07</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">8</td>
+            <td class="headerCovTableEntry">9</td>
+            <td class="headerCovTableEntryMed">88.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">52</td>
+            <td class="headerCovTableEntry">124</td>
+            <td class="headerCovTableEntryLo">41.9 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">           Branch data     Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>                :            : /*-------------------------------------------------------------------------</a>
+<span class="lineNum">       2 </span>                :            :  *
+<span class="lineNum">       3 </span>                :            :  * visibilitymap.c
+<span class="lineNum">       4 </span>                :            :  *    bitmap for tracking visibility of heap tuples
+<span class="lineNum">       5 </span>                :            :  *
+<span class="lineNum">       6 </span>                :            :  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+<span class="lineNum">       7 </span>                :            :  * Portions Copyright (c) 1994, Regents of the University of California
+<span class="lineNum">       8 </span>                :            :  *
+<span class="lineNum">       9 </span>                :            :  *
+<span class="lineNum">      10 </span>                :            :  * IDENTIFICATION
+<span class="lineNum">      11 </span>                :            :  *    src/backend/access/heap/visibilitymap.c
+<span class="lineNum">      12 </span>                :            :  *
+<span class="lineNum">      13 </span>                :            :  * INTERFACE ROUTINES
+<span class="lineNum">      14 </span>                :            :  *      visibilitymap_clear  - clear bits for one page in the visibility map
+<span class="lineNum">      15 </span>                :            :  *      visibilitymap_pin    - pin a map page for setting a bit
+<span class="lineNum">      16 </span>                :            :  *      visibilitymap_pin_ok - check whether correct map page is already pinned
+<span class="lineNum">      17 </span>                :            :  *      visibilitymap_set    - set a bit in a previously pinned page
+<span class="lineNum">      18 </span>                :            :  *      visibilitymap_get_status - get status of bits
+<span class="lineNum">      19 </span>                :            :  *      visibilitymap_count  - count number of bits set in visibility map
+<span class="lineNum">      20 </span>                :            :  *      visibilitymap_truncate  - truncate the visibility map
+<span class="lineNum">      21 </span>                :            :  *
+<span class="lineNum">      22 </span>                :            :  * NOTES
+<span class="lineNum">      23 </span>                :            :  *
+<span class="lineNum">      24 </span>                :            :  * The visibility map is a bitmap with two bits (all-visible and all-frozen)
+<span class="lineNum">      25 </span>                :            :  * per heap page. A set all-visible bit means that all tuples on the page are
+<span class="lineNum">      26 </span>                :            :  * known visible to all transactions, and therefore the page doesn't need to
+<span class="lineNum">      27 </span>                :            :  * be vacuumed. A set all-frozen bit means that all tuples on the page are
+<span class="lineNum">      28 </span>                :            :  * completely frozen, and therefore the page doesn't need to be vacuumed even
+<span class="lineNum">      29 </span>                :            :  * if whole table scanning vacuum is required (e.g. anti-wraparound vacuum).
+<span class="lineNum">      30 </span>                :            :  * The all-frozen bit must be set only when the page is already all-visible.
+<span class="lineNum">      31 </span>                :            :  *
+<span class="lineNum">      32 </span>                :            :  * The map is conservative in the sense that we make sure that whenever a bit
+<span class="lineNum">      33 </span>                :            :  * is set, we know the condition is true, but if a bit is not set, it might or
+<span class="lineNum">      34 </span>                :            :  * might not be true.
+<span class="lineNum">      35 </span>                :            :  *
+<span class="lineNum">      36 </span>                :            :  * Clearing visibility map bits is not separately WAL-logged.  The callers
+<span class="lineNum">      37 </span>                :            :  * must make sure that whenever a bit is cleared, the bit is cleared on WAL
+<span class="lineNum">      38 </span>                :            :  * replay of the updating operation as well.
+<span class="lineNum">      39 </span>                :            :  *
+<span class="lineNum">      40 </span>                :            :  * When we *set* a visibility map during VACUUM, we must write WAL.  This may
+<span class="lineNum">      41 </span>                :            :  * seem counterintuitive, since the bit is basically a hint: if it is clear,
+<span class="lineNum">      42 </span>                :            :  * it may still be the case that every tuple on the page is visible to all
+<span class="lineNum">      43 </span>                :            :  * transactions; we just don't know that for certain.  The difficulty is that
+<span class="lineNum">      44 </span>                :            :  * there are two bits which are typically set together: the PD_ALL_VISIBLE bit
+<span class="lineNum">      45 </span>                :            :  * on the page itself, and the visibility map bit.  If a crash occurs after the
+<span class="lineNum">      46 </span>                :            :  * visibility map page makes it to disk and before the updated heap page makes
+<span class="lineNum">      47 </span>                :            :  * it to disk, redo must set the bit on the heap page.  Otherwise, the next
+<span class="lineNum">      48 </span>                :            :  * insert, update, or delete on the heap page will fail to realize that the
+<span class="lineNum">      49 </span>                :            :  * visibility map bit must be cleared, possibly causing index-only scans to
+<span class="lineNum">      50 </span>                :            :  * return wrong answers.
+<span class="lineNum">      51 </span>                :            :  *
+<span class="lineNum">      52 </span>                :            :  * VACUUM will normally skip pages for which the visibility map bit is set;
+<span class="lineNum">      53 </span>                :            :  * such pages can't contain any dead tuples and therefore don't need vacuuming.
+<span class="lineNum">      54 </span>                :            :  *
+<span class="lineNum">      55 </span>                :            :  * LOCKING
+<span class="lineNum">      56 </span>                :            :  *
+<span class="lineNum">      57 </span>                :            :  * In heapam.c, whenever a page is modified so that not all tuples on the
+<span class="lineNum">      58 </span>                :            :  * page are visible to everyone anymore, the corresponding bit in the
+<span class="lineNum">      59 </span>                :            :  * visibility map is cleared. In order to be crash-safe, we need to do this
+<span class="lineNum">      60 </span>                :            :  * while still holding a lock on the heap page and in the same critical
+<span class="lineNum">      61 </span>                :            :  * section that logs the page modification. However, we don't want to hold
+<span class="lineNum">      62 </span>                :            :  * the buffer lock over any I/O that may be required to read in the visibility
+<span class="lineNum">      63 </span>                :            :  * map page.  To avoid this, we examine the heap page before locking it;
+<span class="lineNum">      64 </span>                :            :  * if the page-level PD_ALL_VISIBLE bit is set, we pin the visibility map
+<span class="lineNum">      65 </span>                :            :  * bit.  Then, we lock the buffer.  But this creates a race condition: there
+<span class="lineNum">      66 </span>                :            :  * is a possibility that in the time it takes to lock the buffer, the
+<span class="lineNum">      67 </span>                :            :  * PD_ALL_VISIBLE bit gets set.  If that happens, we have to unlock the
+<span class="lineNum">      68 </span>                :            :  * buffer, pin the visibility map page, and relock the buffer.  This shouldn't
+<span class="lineNum">      69 </span>                :            :  * happen often, because only VACUUM currently sets visibility map bits,
+<span class="lineNum">      70 </span>                :            :  * and the race will only occur if VACUUM processes a given page at almost
+<span class="lineNum">      71 </span>                :            :  * exactly the same time that someone tries to further modify it.
+<span class="lineNum">      72 </span>                :            :  *
+<span class="lineNum">      73 </span>                :            :  * To set a bit, you need to hold a lock on the heap page. That prevents
+<span class="lineNum">      74 </span>                :            :  * the race condition where VACUUM sees that all tuples on the page are
+<span class="lineNum">      75 </span>                :            :  * visible to everyone, but another backend modifies the page before VACUUM
+<span class="lineNum">      76 </span>                :            :  * sets the bit in the visibility map.
+<span class="lineNum">      77 </span>                :            :  *
+<span class="lineNum">      78 </span>                :            :  * When a bit is set, the LSN of the visibility map page is updated to make
+<span class="lineNum">      79 </span>                :            :  * sure that the visibility map update doesn't get written to disk before the
+<span class="lineNum">      80 </span>                :            :  * WAL record of the changes that made it possible to set the bit is flushed.
+<span class="lineNum">      81 </span>                :            :  * But when a bit is cleared, we don't have to do that because it's always
+<span class="lineNum">      82 </span>                :            :  * safe to clear a bit in the map from correctness point of view.
+<span class="lineNum">      83 </span>                :            :  *
+<span class="lineNum">      84 </span>                :            :  *-------------------------------------------------------------------------
+<span class="lineNum">      85 </span>                :            :  */
+<span class="lineNum">      86 </span>                :            : #include &quot;postgres.h&quot;
+<span class="lineNum">      87 </span>                :            : 
+<span class="lineNum">      88 </span>                :            : #include &quot;access/heapam_xlog.h&quot;
+<span class="lineNum">      89 </span>                :            : #include &quot;access/visibilitymap.h&quot;
+<span class="lineNum">      90 </span>                :            : #include &quot;access/xlog.h&quot;
+<span class="lineNum">      91 </span>                :            : #include &quot;miscadmin.h&quot;
+<span class="lineNum">      92 </span>                :            : #include &quot;port/pg_bitutils.h&quot;
+<span class="lineNum">      93 </span>                :            : #include &quot;storage/bufmgr.h&quot;
+<span class="lineNum">      94 </span>                :            : #include &quot;storage/lmgr.h&quot;
+<span class="lineNum">      95 </span>                :            : #include &quot;storage/smgr.h&quot;
+<span class="lineNum">      96 </span>                :            : #include &quot;utils/inval.h&quot;
+<span class="lineNum">      97 </span>                :            : 
+<span class="lineNum">      98 </span>                :            : 
+<span class="lineNum">      99 </span>                :            : /*#define TRACE_VISIBILITYMAP */
+<span class="lineNum">     100 </span>                :            : 
+<span class="lineNum">     101 </span>                :            : /*
+<span class="lineNum">     102 </span>                :            :  * Size of the bitmap on each visibility map page, in bytes. There's no
+<span class="lineNum">     103 </span>                :            :  * extra headers, so the whole page minus the standard page header is
+<span class="lineNum">     104 </span>                :            :  * used for the bitmap.
+<span class="lineNum">     105 </span>                :            :  */
+<span class="lineNum">     106 </span>                :            : #define MAPSIZE (BLCKSZ - MAXALIGN(SizeOfPageHeaderData))
+<span class="lineNum">     107 </span>                :            : 
+<span class="lineNum">     108 </span>                :            : /* Number of heap blocks we can represent in one byte */
+<span class="lineNum">     109 </span>                :            : #define HEAPBLOCKS_PER_BYTE (BITS_PER_BYTE / BITS_PER_HEAPBLOCK)
+<span class="lineNum">     110 </span>                :            : 
+<span class="lineNum">     111 </span>                :            : /* Number of heap blocks we can represent in one visibility map page. */
+<span class="lineNum">     112 </span>                :            : #define HEAPBLOCKS_PER_PAGE (MAPSIZE * HEAPBLOCKS_PER_BYTE)
+<span class="lineNum">     113 </span>                :            : 
+<span class="lineNum">     114 </span>                :            : /* Mapping from heap block number to the right bit in the visibility map */
+<span class="lineNum">     115 </span>                :            : #define HEAPBLK_TO_MAPBLOCK(x) ((x) / HEAPBLOCKS_PER_PAGE)
+<span class="lineNum">     116 </span>                :            : #define HEAPBLK_TO_MAPBYTE(x) (((x) % HEAPBLOCKS_PER_PAGE) / HEAPBLOCKS_PER_BYTE)
+<span class="lineNum">     117 </span>                :            : #define HEAPBLK_TO_OFFSET(x) (((x) % HEAPBLOCKS_PER_BYTE) * BITS_PER_HEAPBLOCK)
+<span class="lineNum">     118 </span>                :            : 
+<span class="lineNum">     119 </span>                :            : /* Masks for counting subsets of bits in the visibility map. */
+<span class="lineNum">     120 </span>                :            : #define VISIBLE_MASK64  UINT64CONST(0x5555555555555555) /* The lower bit of each
+<span class="lineNum">     121 </span>                :            :                                                          * bit pair */
+<span class="lineNum">     122 </span>                :            : #define FROZEN_MASK64   UINT64CONST(0xaaaaaaaaaaaaaaaa) /* The upper bit of each
+<span class="lineNum">     123 </span>                :            :                                                          * bit pair */
+<span class="lineNum">     124 </span>                :            : 
+<span class="lineNum">     125 </span>                :            : /* prototypes for internal routines */
+<span class="lineNum">     126 </span>                :            : static Buffer vm_readbuf(Relation rel, BlockNumber blkno, bool extend);
+<span class="lineNum">     127 </span>                :            : static void vm_extend(Relation rel, BlockNumber nvmblocks);
+<span class="lineNum">     128 </span>                :            : 
+<span class="lineNum">     129 </span>                :            : 
+<span class="lineNum">     130 </span>                :            : /*
+<span class="lineNum">     131 </span>                :            :  *  visibilitymap_clear - clear specified bits for one page in visibility map
+<span class="lineNum">     132 </span>                :            :  *
+<span class="lineNum">     133 </span>                :            :  * You must pass a buffer containing the correct map page to this function.
+<span class="lineNum">     134 </span>                :            :  * Call visibilitymap_pin first to pin the right one. This function doesn't do
+<span class="lineNum">     135 </span>                :            :  * any I/O.  Returns true if any bits have been cleared and false otherwise.
+<a name="136"><span class="lineNum">     136 </span>                :            :  */</a>
+<span class="lineNum">     137 </span>                :            : bool
+<span class="lineNum">     138 </span>                :<span class="lineCov">        475 : visibilitymap_clear(Relation rel, BlockNumber heapBlk, Buffer buf, uint8 flags)</span>
+<span class="lineNum">     139 </span>                :            : {
+<span class="lineNum">     140 </span>                :<span class="lineCov">        475 :     BlockNumber mapBlock = HEAPBLK_TO_MAPBLOCK(heapBlk);</span>
+<span class="lineNum">     141 </span>                :<span class="lineCov">        475 :     int         mapByte = HEAPBLK_TO_MAPBYTE(heapBlk);</span>
+<span class="lineNum">     142 </span>                :<span class="lineCov">        475 :     int         mapOffset = HEAPBLK_TO_OFFSET(heapBlk);</span>
+<span class="lineNum">     143 </span>                :<span class="lineCov">        475 :     uint8       mask = flags &lt;&lt; mapOffset;</span>
+<span class="lineNum">     144 </span>                :            :     char       *map;
+<span class="lineNum">     145 </span>                :<span class="lineCov">        475 :     bool        cleared = false;</span>
+<span class="lineNum">     146 </span>                :            : 
+<span class="lineNum">     147 </span>                :            :     Assert(flags &amp; VISIBILITYMAP_VALID_BITS);
+<span class="lineNum">     148 </span>                :            : 
+<span class="lineNum">     149 </span>                :            : #ifdef TRACE_VISIBILITYMAP
+<span class="lineNum">     150 </span>                :            :     elog(DEBUG1, &quot;vm_clear %s %d&quot;, RelationGetRelationName(rel), heapBlk);
+<span class="lineNum">     151 </span>                :            : #endif
+<span class="lineNum">     152 </span>                :            : 
+<span class="lineNum">     153 </span>[<span class="branchCov" title="Branch 0 was taken 475 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchNoCov" title="Branch 3 was not taken"> - </span><span class="branchCov" title="Branch 4 was taken 475 times"> + </span>]:<span class="lineCov">        475 :     if (!BufferIsValid(buf) || BufferGetBlockNumber(buf) != mapBlock)</span>
+<span class="lineNum">     154 </span>                :<span class="lineNoCov">          0 :         elog(ERROR, &quot;wrong buffer passed to visibilitymap_clear&quot;);</span>
+<span class="lineNum">     155 </span>                :            : 
+<span class="lineNum">     156 </span>                :<span class="lineCov">        475 :     LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);</span>
+<span class="lineNum">     157 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 475 times"> + </span>]:<span class="lineCov">        475 :     map = PageGetContents(BufferGetPage(buf));</span>
+<span class="lineNum">     158 </span>                :            : 
+<span class="lineNum">     159 </span>        [<span class="branchCov" title="Branch 0 was taken 446 times"> + </span><span class="branchCov" title="Branch 1 was taken 29 times"> + </span>]:<span class="lineCov">        475 :     if (map[mapByte] &amp; mask)</span>
+<span class="lineNum">     160 </span>                :            :     {
+<span class="lineNum">     161 </span>                :<span class="lineCov">        446 :         map[mapByte] &amp;= ~mask;</span>
+<span class="lineNum">     162 </span>                :            : 
+<span class="lineNum">     163 </span>                :<span class="lineCov">        446 :         MarkBufferDirty(buf);</span>
+<span class="lineNum">     164 </span>                :<span class="lineCov">        446 :         cleared = true;</span>
+<span class="lineNum">     165 </span>                :            :     }
+<span class="lineNum">     166 </span>                :            : 
+<span class="lineNum">     167 </span>                :<span class="lineCov">        475 :     LockBuffer(buf, BUFFER_LOCK_UNLOCK);</span>
+<span class="lineNum">     168 </span>                :            : 
+<span class="lineNum">     169 </span>                :<span class="lineCov">        475 :     return cleared;</span>
+<span class="lineNum">     170 </span>                :            : }
+<span class="lineNum">     171 </span>                :            : 
+<span class="lineNum">     172 </span>                :            : /*
+<span class="lineNum">     173 </span>                :            :  *  visibilitymap_pin - pin a map page for setting a bit
+<span class="lineNum">     174 </span>                :            :  *
+<span class="lineNum">     175 </span>                :            :  * Setting a bit in the visibility map is a two-phase operation. First, call
+<span class="lineNum">     176 </span>                :            :  * visibilitymap_pin, to pin the visibility map page containing the bit for
+<span class="lineNum">     177 </span>                :            :  * the heap page. Because that can require I/O to read the map page, you
+<span class="lineNum">     178 </span>                :            :  * shouldn't hold a lock on the heap page while doing that. Then, call
+<span class="lineNum">     179 </span>                :            :  * visibilitymap_set to actually set the bit.
+<span class="lineNum">     180 </span>                :            :  *
+<span class="lineNum">     181 </span>                :            :  * On entry, *buf should be InvalidBuffer or a valid buffer returned by
+<span class="lineNum">     182 </span>                :            :  * an earlier call to visibilitymap_pin or visibilitymap_get_status on the same
+<span class="lineNum">     183 </span>                :            :  * relation. On return, *buf is a valid buffer with the map page containing
+<span class="lineNum">     184 </span>                :            :  * the bit for heapBlk.
+<span class="lineNum">     185 </span>                :            :  *
+<span class="lineNum">     186 </span>                :            :  * If the page doesn't exist in the map file yet, it is extended.
+<a name="187"><span class="lineNum">     187 </span>                :            :  */</a>
+<span class="lineNum">     188 </span>                :            : void
+<span class="lineNum">     189 </span>                :<span class="lineCov">        725 : visibilitymap_pin(Relation rel, BlockNumber heapBlk, Buffer *buf)</span>
+<span class="lineNum">     190 </span>                :            : {
+<span class="lineNum">     191 </span>                :<span class="lineCov">        725 :     BlockNumber mapBlock = HEAPBLK_TO_MAPBLOCK(heapBlk);</span>
+<span class="lineNum">     192 </span>                :            : 
+<span class="lineNum">     193 </span>                :            :     /* Reuse the old pinned buffer if possible */
+<span class="lineNum">     194 </span>        [<span class="branchCov" title="Branch 0 was taken 223 times"> + </span><span class="branchCov" title="Branch 1 was taken 502 times"> + </span>]:<span class="lineCov">        725 :     if (BufferIsValid(*buf))</span>
+<span class="lineNum">     195 </span>                :            :     {
+<span class="lineNum">     196 </span>        [<span class="branchCov" title="Branch 1 was taken 223 times"> + </span><span class="branchNoCov" title="Branch 2 was not taken"> - </span>]:<span class="lineCov">        223 :         if (BufferGetBlockNumber(*buf) == mapBlock)</span>
+<span class="lineNum">     197 </span>                :<span class="lineCov">        223 :             return;</span>
+<span class="lineNum">     198 </span>                :            : 
+<span class="lineNum">     199 </span>                :<span class="lineNoCov">          0 :         ReleaseBuffer(*buf);</span>
+<span class="lineNum">     200 </span>                :            :     }
+<span class="lineNum">     201 </span>                :<span class="lineCov">        502 :     *buf = vm_readbuf(rel, mapBlock, true);</span>
+<span class="lineNum">     202 </span>                :            : }
+<span class="lineNum">     203 </span>                :            : 
+<span class="lineNum">     204 </span>                :            : /*
+<span class="lineNum">     205 </span>                :            :  *  visibilitymap_pin_ok - do we already have the correct page pinned?
+<span class="lineNum">     206 </span>                :            :  *
+<span class="lineNum">     207 </span>                :            :  * On entry, buf should be InvalidBuffer or a valid buffer returned by
+<span class="lineNum">     208 </span>                :            :  * an earlier call to visibilitymap_pin or visibilitymap_get_status on the same
+<span class="lineNum">     209 </span>                :            :  * relation.  The return value indicates whether the buffer covers the
+<span class="lineNum">     210 </span>                :            :  * given heapBlk.
+<a name="211"><span class="lineNum">     211 </span>                :            :  */</a>
+<span class="lineNum">     212 </span>                :            : bool
+<span class="lineNum">     213 </span>                :<span class="lineCov">        329 : visibilitymap_pin_ok(BlockNumber heapBlk, Buffer buf)</span>
+<span class="lineNum">     214 </span>                :            : {
+<span class="lineNum">     215 </span>                :<span class="lineCov">        329 :     BlockNumber mapBlock = HEAPBLK_TO_MAPBLOCK(heapBlk);</span>
+<span class="lineNum">     216 </span>                :            : 
+<span class="lineNum">     217 </span>[<span class="branchCov" title="Branch 0 was taken 329 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchCov" title="Branch 3 was taken 329 times"> + </span><span class="branchNoCov" title="Branch 4 was not taken"> - </span>]:<span class="lineCov">        329 :     return BufferIsValid(buf) &amp;&amp; BufferGetBlockNumber(buf) == mapBlock;</span>
+<span class="lineNum">     218 </span>                :            : }
+<span class="lineNum">     219 </span>                :            : 
+<span class="lineNum">     220 </span>                :            : /*
+<span class="lineNum">     221 </span>                :            :  *  visibilitymap_set - set bit(s) on a previously pinned page
+<span class="lineNum">     222 </span>                :            :  *
+<span class="lineNum">     223 </span>                :            :  * recptr is the LSN of the XLOG record we're replaying, if we're in recovery,
+<span class="lineNum">     224 </span>                :            :  * or InvalidXLogRecPtr in normal running.  The page LSN is advanced to the
+<span class="lineNum">     225 </span>                :            :  * one provided; in normal running, we generate a new XLOG record and set the
+<span class="lineNum">     226 </span>                :            :  * page LSN to that value.  cutoff_xid is the largest xmin on the page being
+<span class="lineNum">     227 </span>                :            :  * marked all-visible; it is needed for Hot Standby, and can be
+<span class="lineNum">     228 </span>                :            :  * InvalidTransactionId if the page contains no tuples.  It can also be set
+<span class="lineNum">     229 </span>                :            :  * to InvalidTransactionId when a page that is already all-visible is being
+<span class="lineNum">     230 </span>                :            :  * marked all-frozen.
+<span class="lineNum">     231 </span>                :            :  *
+<span class="lineNum">     232 </span>                :            :  * Caller is expected to set the heap page's PD_ALL_VISIBLE bit before calling
+<span class="lineNum">     233 </span>                :            :  * this function. Except in recovery, caller should also pass the heap
+<span class="lineNum">     234 </span>                :            :  * buffer. When checksums are enabled and we're not in recovery, we must add
+<span class="lineNum">     235 </span>                :            :  * the heap buffer to the WAL chain to protect it from being torn.
+<span class="lineNum">     236 </span>                :            :  *
+<span class="lineNum">     237 </span>                :            :  * You must pass a buffer containing the correct map page to this function.
+<span class="lineNum">     238 </span>                :            :  * Call visibilitymap_pin first to pin the right one. This function doesn't do
+<span class="lineNum">     239 </span>                :            :  * any I/O.
+<a name="240"><span class="lineNum">     240 </span>                :            :  */</a>
+<span class="lineNum">     241 </span>                :            : void
+<span class="lineNum">     242 </span>                :<span class="lineCov">        186 : visibilitymap_set(Relation rel, BlockNumber heapBlk, Buffer heapBuf,</span>
+<span class="lineNum">     243 </span>                :            :                   XLogRecPtr recptr, Buffer vmBuf, TransactionId cutoff_xid,
+<span class="lineNum">     244 </span>                :            :                   uint8 flags)
+<span class="lineNum">     245 </span>                :            : {
+<span class="lineNum">     246 </span>                :<span class="lineCov">        186 :     BlockNumber mapBlock = HEAPBLK_TO_MAPBLOCK(heapBlk);</span>
+<span class="lineNum">     247 </span>                :<span class="lineCov">        186 :     uint32      mapByte = HEAPBLK_TO_MAPBYTE(heapBlk);</span>
+<span class="lineNum">     248 </span>                :<span class="lineCov">        186 :     uint8       mapOffset = HEAPBLK_TO_OFFSET(heapBlk);</span>
+<span class="lineNum">     249 </span>                :            :     Page        page;
+<span class="lineNum">     250 </span>                :            :     uint8      *map;
+<span class="lineNum">     251 </span>                :            : 
+<span class="lineNum">     252 </span>                :            : #ifdef TRACE_VISIBILITYMAP
+<span class="lineNum">     253 </span>                :            :     elog(DEBUG1, &quot;vm_set %s %d&quot;, RelationGetRelationName(rel), heapBlk);
+<span class="lineNum">     254 </span>                :            : #endif
+<span class="lineNum">     255 </span>                :            : 
+<span class="lineNum">     256 </span>                :            :     Assert(InRecovery || XLogRecPtrIsInvalid(recptr));
+<span class="lineNum">     257 </span>                :            :     Assert(InRecovery || BufferIsValid(heapBuf));
+<span class="lineNum">     258 </span>                :            :     Assert(flags &amp; VISIBILITYMAP_VALID_BITS);
+<span class="lineNum">     259 </span>                :            : 
+<span class="lineNum">     260 </span>                :            :     /* Check that we have the right heap page pinned, if present */
+<span class="lineNum">     261 </span>[<span class="branchCov" title="Branch 0 was taken 186 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchNoCov" title="Branch 3 was not taken"> - </span><span class="branchCov" title="Branch 4 was taken 186 times"> + </span>]:<span class="lineCov">        186 :     if (BufferIsValid(heapBuf) &amp;&amp; BufferGetBlockNumber(heapBuf) != heapBlk)</span>
+<span class="lineNum">     262 </span>                :<span class="lineNoCov">          0 :         elog(ERROR, &quot;wrong heap buffer passed to visibilitymap_set&quot;);</span>
+<span class="lineNum">     263 </span>                :            : 
+<span class="lineNum">     264 </span>                :            :     /* Check that we have the right VM page pinned */
+<span class="lineNum">     265 </span>[<span class="branchCov" title="Branch 0 was taken 186 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchNoCov" title="Branch 3 was not taken"> - </span><span class="branchCov" title="Branch 4 was taken 186 times"> + </span>]:<span class="lineCov">        186 :     if (!BufferIsValid(vmBuf) || BufferGetBlockNumber(vmBuf) != mapBlock)</span>
+<span class="lineNum">     266 </span>                :<span class="lineNoCov">          0 :         elog(ERROR, &quot;wrong VM buffer passed to visibilitymap_set&quot;);</span>
+<span class="lineNum">     267 </span>                :            : 
+<span class="lineNum">     268 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 186 times"> + </span>]:<span class="lineCov">        186 :     page = BufferGetPage(vmBuf);</span>
+<span class="lineNum">     269 </span>                :<span class="lineCov">        186 :     map = (uint8 *) PageGetContents(page);</span>
+<span class="lineNum">     270 </span>                :<span class="lineCov">        186 :     LockBuffer(vmBuf, BUFFER_LOCK_EXCLUSIVE);</span>
+<span class="lineNum">     271 </span>                :            : 
+<span class="lineNum">     272 </span>        [<span class="branchCov" title="Branch 0 was taken 186 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">        186 :     if (flags != (map[mapByte] &gt;&gt; mapOffset &amp; VISIBILITYMAP_VALID_BITS))</span>
+<span class="lineNum">     273 </span>                :            :     {
+<span class="lineNum">     274 </span>                :<span class="lineCov">        186 :         START_CRIT_SECTION();</span>
+<span class="lineNum">     275 </span>                :            : 
+<span class="lineNum">     276 </span>                :<span class="lineCov">        186 :         map[mapByte] |= (flags &lt;&lt; mapOffset);</span>
+<span class="lineNum">     277 </span>                :<span class="lineCov">        186 :         MarkBufferDirty(vmBuf);</span>
+<span class="lineNum">     278 </span>                :            : 
+<span class="lineNum">     279 </span>        [<span class="branchCov" title="Branch 0 was taken 186 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">        186 :         if (RelationNeedsWAL(rel))</span>
+<span class="lineNum">     280 </span>                :            :         {
+<span class="lineNum">     281 </span>        [<span class="branchCov" title="Branch 0 was taken 186 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">        186 :             if (XLogRecPtrIsInvalid(recptr))</span>
+<span class="lineNum">     282 </span>                :            :             {
+<span class="lineNum">     283 </span>                :            :                 Assert(!InRecovery);
+<span class="lineNum">     284 </span>                :<span class="lineCov">        186 :                 recptr = log_heap_visible(rel-&gt;rd_node, heapBuf, vmBuf,</span>
+<span class="lineNum">     285 </span>                :            :                                           cutoff_xid, flags);
+<span class="lineNum">     286 </span>                :            : 
+<span class="lineNum">     287 </span>                :            :                 /*
+<span class="lineNum">     288 </span>                :            :                  * If data checksums are enabled (or wal_log_hints=on), we
+<span class="lineNum">     289 </span>                :            :                  * need to protect the heap page from being torn.
+<span class="lineNum">     290 </span>                :            :                  */
+<span class="lineNum">     291 </span>[<span class="branchCov" title="Branch 1 was taken 186 times"> + </span><span class="branchNoCov" title="Branch 2 was not taken"> - </span>][<span class="branchNoCov" title="Branch 3 was not taken"> - </span><span class="branchCov" title="Branch 4 was taken 186 times"> + </span>]:<span class="lineCov">        186 :                 if (XLogHintBitIsNeeded())</span>
+<span class="lineNum">     292 </span>                :            :                 {
+<span class="lineNum">     293 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :                     Page        heapPage = BufferGetPage(heapBuf);</span>
+<span class="lineNum">     294 </span>                :            : 
+<span class="lineNum">     295 </span>                :            :                     /* caller is expected to set PD_ALL_VISIBLE first */
+<span class="lineNum">     296 </span>                :            :                     Assert(PageIsAllVisible(heapPage));
+<span class="lineNum">     297 </span>                :<span class="lineNoCov">          0 :                     PageSetLSN(heapPage, recptr);</span>
+<span class="lineNum">     298 </span>                :            :                 }
+<span class="lineNum">     299 </span>                :            :             }
+<span class="lineNum">     300 </span>                :<span class="lineCov">        186 :             PageSetLSN(page, recptr);</span>
+<span class="lineNum">     301 </span>                :            :         }
+<span class="lineNum">     302 </span>                :            : 
+<span class="lineNum">     303 </span>                :<span class="lineCov">        186 :         END_CRIT_SECTION();</span>
+<span class="lineNum">     304 </span>                :            :     }
+<span class="lineNum">     305 </span>                :            : 
+<span class="lineNum">     306 </span>                :<span class="lineCov">        186 :     LockBuffer(vmBuf, BUFFER_LOCK_UNLOCK);</span>
+<span class="lineNum">     307 </span>                :<span class="lineCov">        186 : }</span>
+<span class="lineNum">     308 </span>                :            : 
+<span class="lineNum">     309 </span>                :            : /*
+<span class="lineNum">     310 </span>                :            :  *  visibilitymap_get_status - get status of bits
+<span class="lineNum">     311 </span>                :            :  *
+<span class="lineNum">     312 </span>                :            :  * Are all tuples on heapBlk visible to all or are marked frozen, according
+<span class="lineNum">     313 </span>                :            :  * to the visibility map?
+<span class="lineNum">     314 </span>                :            :  *
+<span class="lineNum">     315 </span>                :            :  * On entry, *buf should be InvalidBuffer or a valid buffer returned by an
+<span class="lineNum">     316 </span>                :            :  * earlier call to visibilitymap_pin or visibilitymap_get_status on the same
+<span class="lineNum">     317 </span>                :            :  * relation. On return, *buf is a valid buffer with the map page containing
+<span class="lineNum">     318 </span>                :            :  * the bit for heapBlk, or InvalidBuffer. The caller is responsible for
+<span class="lineNum">     319 </span>                :            :  * releasing *buf after it's done testing and setting bits.
+<span class="lineNum">     320 </span>                :            :  *
+<span class="lineNum">     321 </span>                :            :  * NOTE: This function is typically called without a lock on the heap page,
+<span class="lineNum">     322 </span>                :            :  * so somebody else could change the bit just after we look at it.  In fact,
+<span class="lineNum">     323 </span>                :            :  * since we don't lock the visibility map page either, it's even possible that
+<span class="lineNum">     324 </span>                :            :  * someone else could have changed the bit just before we look at it, but yet
+<span class="lineNum">     325 </span>                :            :  * we might see the old value.  It is the caller's responsibility to deal with
+<span class="lineNum">     326 </span>                :            :  * all concurrency issues!
+<a name="327"><span class="lineNum">     327 </span>                :            :  */</a>
+<span class="lineNum">     328 </span>                :            : uint8
+<span class="lineNum">     329 </span>                :<span class="lineCov">      28168 : visibilitymap_get_status(Relation rel, BlockNumber heapBlk, Buffer *buf)</span>
+<span class="lineNum">     330 </span>                :            : {
+<span class="lineNum">     331 </span>                :<span class="lineCov">      28168 :     BlockNumber mapBlock = HEAPBLK_TO_MAPBLOCK(heapBlk);</span>
+<span class="lineNum">     332 </span>                :<span class="lineCov">      28168 :     uint32      mapByte = HEAPBLK_TO_MAPBYTE(heapBlk);</span>
+<span class="lineNum">     333 </span>                :<span class="lineCov">      28168 :     uint8       mapOffset = HEAPBLK_TO_OFFSET(heapBlk);</span>
+<span class="lineNum">     334 </span>                :            :     char       *map;
+<span class="lineNum">     335 </span>                :            :     uint8       result;
+<span class="lineNum">     336 </span>                :            : 
+<span class="lineNum">     337 </span>                :            : #ifdef TRACE_VISIBILITYMAP
+<span class="lineNum">     338 </span>                :            :     elog(DEBUG1, &quot;vm_get_status %s %d&quot;, RelationGetRelationName(rel), heapBlk);
+<span class="lineNum">     339 </span>                :            : #endif
+<span class="lineNum">     340 </span>                :            : 
+<span class="lineNum">     341 </span>                :            :     /* Reuse the old pinned buffer if possible */
+<span class="lineNum">     342 </span>        [<span class="branchCov" title="Branch 0 was taken 419 times"> + </span><span class="branchCov" title="Branch 1 was taken 27749 times"> + </span>]:<span class="lineCov">      28168 :     if (BufferIsValid(*buf))</span>
+<span class="lineNum">     343 </span>                :            :     {
+<span class="lineNum">     344 </span>        [<span class="branchNoCov" title="Branch 1 was not taken"> - </span><span class="branchCov" title="Branch 2 was taken 419 times"> + </span>]:<span class="lineCov">        419 :         if (BufferGetBlockNumber(*buf) != mapBlock)</span>
+<span class="lineNum">     345 </span>                :            :         {
+<span class="lineNum">     346 </span>                :<span class="lineNoCov">          0 :             ReleaseBuffer(*buf);</span>
+<span class="lineNum">     347 </span>                :<span class="lineNoCov">          0 :             *buf = InvalidBuffer;</span>
+<span class="lineNum">     348 </span>                :            :         }
+<span class="lineNum">     349 </span>                :            :     }
+<span class="lineNum">     350 </span>                :            : 
+<span class="lineNum">     351 </span>        [<span class="branchCov" title="Branch 0 was taken 27749 times"> + </span><span class="branchCov" title="Branch 1 was taken 419 times"> + </span>]:<span class="lineCov">      28168 :     if (!BufferIsValid(*buf))</span>
+<span class="lineNum">     352 </span>                :            :     {
+<span class="lineNum">     353 </span>                :<span class="lineCov">      27749 :         *buf = vm_readbuf(rel, mapBlock, false);</span>
+<span class="lineNum">     354 </span>        [<span class="branchCov" title="Branch 0 was taken 19190 times"> + </span><span class="branchCov" title="Branch 1 was taken 8559 times"> + </span>]:<span class="lineCov">      27749 :         if (!BufferIsValid(*buf))</span>
+<span class="lineNum">     355 </span>                :<span class="lineCov">      19190 :             return false;</span>
+<span class="lineNum">     356 </span>                :            :     }
+<span class="lineNum">     357 </span>                :            : 
+<span class="lineNum">     358 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 8978 times"> + </span>]:<span class="lineCov">       8978 :     map = PageGetContents(BufferGetPage(*buf));</span>
+<span class="lineNum">     359 </span>                :            : 
+<span class="lineNum">     360 </span>                :            :     /*
+<span class="lineNum">     361 </span>                :            :      * A single byte read is atomic.  There could be memory-ordering effects
+<span class="lineNum">     362 </span>                :            :      * here, but for performance reasons we make it the caller's job to worry
+<span class="lineNum">     363 </span>                :            :      * about that.
+<span class="lineNum">     364 </span>                :            :      */
+<span class="lineNum">     365 </span>                :<span class="lineCov">       8978 :     result = ((map[mapByte] &gt;&gt; mapOffset) &amp; VISIBILITYMAP_VALID_BITS);</span>
+<span class="lineNum">     366 </span>                :<span class="lineCov">       8978 :     return result;</span>
+<span class="lineNum">     367 </span>                :            : }
+<span class="lineNum">     368 </span>                :            : 
+<span class="lineNum">     369 </span>                :            : /*
+<span class="lineNum">     370 </span>                :            :  *  visibilitymap_count  - count number of bits set in visibility map
+<span class="lineNum">     371 </span>                :            :  *
+<span class="lineNum">     372 </span>                :            :  * Note: we ignore the possibility of race conditions when the table is being
+<span class="lineNum">     373 </span>                :            :  * extended concurrently with the call.  New pages added to the table aren't
+<span class="lineNum">     374 </span>                :            :  * going to be marked all-visible or all-frozen, so they won't affect the result.
+<a name="375"><span class="lineNum">     375 </span>                :            :  */</a>
+<span class="lineNum">     376 </span>                :            : void
+<span class="lineNum">     377 </span>                :<span class="lineCov">        617 : visibilitymap_count(Relation rel, BlockNumber *all_visible, BlockNumber *all_frozen)</span>
+<span class="lineNum">     378 </span>                :            : {
+<span class="lineNum">     379 </span>                :            :     BlockNumber mapBlock;
+<span class="lineNum">     380 </span>                :<span class="lineCov">        617 :     BlockNumber nvisible = 0;</span>
+<span class="lineNum">     381 </span>                :<span class="lineCov">        617 :     BlockNumber nfrozen = 0;</span>
+<span class="lineNum">     382 </span>                :            : 
+<span class="lineNum">     383 </span>                :            :     /* all_visible must be specified */
+<span class="lineNum">     384 </span>                :            :     Assert(all_visible);
+<span class="lineNum">     385 </span>                :            : 
+<span class="lineNum">     386 </span>                :<span class="lineCov">        617 :     for (mapBlock = 0;; mapBlock++)</span>
+<span class="lineNum">     387 </span>                :            :     {
+<span class="lineNum">     388 </span>                :            :         Buffer      mapBuffer;
+<span class="lineNum">     389 </span>                :            :         uint64     *map;
+<span class="lineNum">     390 </span>                :            :         int         i;
+<span class="lineNum">     391 </span>                :            : 
+<span class="lineNum">     392 </span>                :            :         /*
+<span class="lineNum">     393 </span>                :            :          * Read till we fall off the end of the map.  We assume that any extra
+<span class="lineNum">     394 </span>                :            :          * bytes in the last page are zeroed, so we don't bother excluding
+<span class="lineNum">     395 </span>                :            :          * them from the count.
+<span class="lineNum">     396 </span>                :            :          */
+<span class="lineNum">     397 </span>                :<span class="lineCov">        631 :         mapBuffer = vm_readbuf(rel, mapBlock, false);</span>
+<span class="lineNum">     398 </span>        [<span class="branchCov" title="Branch 0 was taken 617 times"> + </span><span class="branchCov" title="Branch 1 was taken 14 times"> + </span>]:<span class="lineCov">        631 :         if (!BufferIsValid(mapBuffer))</span>
+<span class="lineNum">     399 </span>                :<span class="lineCov">        617 :             break;</span>
+<span class="lineNum">     400 </span>                :            : 
+<span class="lineNum">     401 </span>                :            :         /*
+<span class="lineNum">     402 </span>                :            :          * We choose not to lock the page, since the result is going to be
+<span class="lineNum">     403 </span>                :            :          * immediately stale anyway if anyone is concurrently setting or
+<span class="lineNum">     404 </span>                :            :          * clearing bits, and we only really need an approximate value.
+<span class="lineNum">     405 </span>                :            :          */
+<span class="lineNum">     406 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 14 times"> + </span>]:<span class="lineCov">         14 :         map = (uint64 *) PageGetContents(BufferGetPage(mapBuffer));</span>
+<span class="lineNum">     407 </span>                :            : 
+<span class="lineNum">     408 </span>                :            :         StaticAssertStmt(MAPSIZE % sizeof(uint64) == 0,
+<span class="lineNum">     409 </span>                :            :                          &quot;unsupported MAPSIZE&quot;);
+<span class="lineNum">     410 </span>        [<span class="branchCov" title="Branch 0 was taken 14 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">         14 :         if (all_frozen == NULL)</span>
+<span class="lineNum">     411 </span>                :            :         {
+<span class="lineNum">     412 </span>        [<span class="branchCov" title="Branch 0 was taken 14294 times"> + </span><span class="branchCov" title="Branch 1 was taken 14 times"> + </span>]:<span class="lineCov">      14308 :             for (i = 0; i &lt; MAPSIZE / sizeof(uint64); i++)</span>
+<span class="lineNum">     413 </span>                :<span class="lineCov">      14294 :                 nvisible += pg_popcount64(map[i] &amp; VISIBLE_MASK64);</span>
+<span class="lineNum">     414 </span>                :            :         }
+<span class="lineNum">     415 </span>                :            :         else
+<span class="lineNum">     416 </span>                :            :         {
+<span class="lineNum">     417 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             for (i = 0; i &lt; MAPSIZE / sizeof(uint64); i++)</span>
+<span class="lineNum">     418 </span>                :            :             {
+<span class="lineNum">     419 </span>                :<span class="lineNoCov">          0 :                 nvisible += pg_popcount64(map[i] &amp; VISIBLE_MASK64);</span>
+<span class="lineNum">     420 </span>                :<span class="lineNoCov">          0 :                 nfrozen += pg_popcount64(map[i] &amp; FROZEN_MASK64);</span>
+<span class="lineNum">     421 </span>                :            :             }
+<span class="lineNum">     422 </span>                :            :         }
+<span class="lineNum">     423 </span>                :            : 
+<span class="lineNum">     424 </span>                :<span class="lineCov">         14 :         ReleaseBuffer(mapBuffer);</span>
+<span class="lineNum">     425 </span>                :<span class="lineCov">         14 :     }</span>
+<span class="lineNum">     426 </span>                :            : 
+<span class="lineNum">     427 </span>                :<span class="lineCov">        617 :     *all_visible = nvisible;</span>
+<span class="lineNum">     428 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 617 times"> + </span>]:<span class="lineCov">        617 :     if (all_frozen)</span>
+<span class="lineNum">     429 </span>                :<span class="lineNoCov">          0 :         *all_frozen = nfrozen;</span>
+<span class="lineNum">     430 </span>                :<span class="lineCov">        617 : }</span>
+<span class="lineNum">     431 </span>                :            : 
+<span class="lineNum">     432 </span>                :            : /*
+<span class="lineNum">     433 </span>                :            :  *  visibilitymap_truncate - truncate the visibility map
+<span class="lineNum">     434 </span>                :            :  *
+<span class="lineNum">     435 </span>                :            :  * The caller must hold AccessExclusiveLock on the relation, to ensure that
+<span class="lineNum">     436 </span>                :            :  * other backends receive the smgr invalidation event that this function sends
+<span class="lineNum">     437 </span>                :            :  * before they access the VM again.
+<span class="lineNum">     438 </span>                :            :  *
+<span class="lineNum">     439 </span>                :            :  * nheapblocks is the new size of the heap.
+<a name="440"><span class="lineNum">     440 </span>                :            :  */</a>
+<span class="lineNum">     441 </span>                :            : void
+<span class="lineNum">     442 </span>                :<span class="lineNoCov">          0 : visibilitymap_truncate(Relation rel, BlockNumber nheapblocks)</span>
+<span class="lineNum">     443 </span>                :            : {
+<span class="lineNum">     444 </span>                :            :     BlockNumber newnblocks;
+<span class="lineNum">     445 </span>                :            : 
+<span class="lineNum">     446 </span>                :            :     /* last remaining block, byte, and bit */
+<span class="lineNum">     447 </span>                :<span class="lineNoCov">          0 :     BlockNumber truncBlock = HEAPBLK_TO_MAPBLOCK(nheapblocks);</span>
+<span class="lineNum">     448 </span>                :<span class="lineNoCov">          0 :     uint32      truncByte = HEAPBLK_TO_MAPBYTE(nheapblocks);</span>
+<span class="lineNum">     449 </span>                :<span class="lineNoCov">          0 :     uint8       truncOffset = HEAPBLK_TO_OFFSET(nheapblocks);</span>
+<span class="lineNum">     450 </span>                :            : 
+<span class="lineNum">     451 </span>                :            : #ifdef TRACE_VISIBILITYMAP
+<span class="lineNum">     452 </span>                :            :     elog(DEBUG1, &quot;vm_truncate %s %d&quot;, RelationGetRelationName(rel), nheapblocks);
+<span class="lineNum">     453 </span>                :            : #endif
+<span class="lineNum">     454 </span>                :            : 
+<span class="lineNum">     455 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     RelationOpenSmgr(rel);</span>
+<span class="lineNum">     456 </span>                :            : 
+<span class="lineNum">     457 </span>                :            :     /*
+<span class="lineNum">     458 </span>                :            :      * If no visibility map has been created yet for this relation, there's
+<span class="lineNum">     459 </span>                :            :      * nothing to truncate.
+<span class="lineNum">     460 </span>                :            :      */
+<span class="lineNum">     461 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!smgrexists(rel-&gt;rd_smgr, VISIBILITYMAP_FORKNUM))</span>
+<span class="lineNum">     462 </span>                :<span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     463 </span>                :            : 
+<span class="lineNum">     464 </span>                :            :     /*
+<span class="lineNum">     465 </span>                :            :      * Unless the new size is exactly at a visibility map page boundary, the
+<span class="lineNum">     466 </span>                :            :      * tail bits in the last remaining map page, representing truncated heap
+<span class="lineNum">     467 </span>                :            :      * blocks, need to be cleared. This is not only tidy, but also necessary
+<span class="lineNum">     468 </span>                :            :      * because we don't get a chance to clear the bits if the heap is extended
+<span class="lineNum">     469 </span>                :            :      * again.
+<span class="lineNum">     470 </span>                :            :      */
+<span class="lineNum">     471 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (truncByte != 0 || truncOffset != 0)</span>
+<span class="lineNum">     472 </span>                :<span class="lineNoCov">          0 :     {</span>
+<span class="lineNum">     473 </span>                :            :         Buffer      mapBuffer;
+<span class="lineNum">     474 </span>                :            :         Page        page;
+<span class="lineNum">     475 </span>                :            :         char       *map;
+<span class="lineNum">     476 </span>                :            : 
+<span class="lineNum">     477 </span>                :<span class="lineNoCov">          0 :         newnblocks = truncBlock + 1;</span>
+<span class="lineNum">     478 </span>                :            : 
+<span class="lineNum">     479 </span>                :<span class="lineNoCov">          0 :         mapBuffer = vm_readbuf(rel, truncBlock, false);</span>
+<span class="lineNum">     480 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (!BufferIsValid(mapBuffer))</span>
+<span class="lineNum">     481 </span>                :            :         {
+<span class="lineNum">     482 </span>                :            :             /* nothing to do, the file was already smaller */
+<span class="lineNum">     483 </span>                :<span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     484 </span>                :            :         }
+<span class="lineNum">     485 </span>                :            : 
+<span class="lineNum">     486 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         page = BufferGetPage(mapBuffer);</span>
+<span class="lineNum">     487 </span>                :<span class="lineNoCov">          0 :         map = PageGetContents(page);</span>
+<span class="lineNum">     488 </span>                :            : 
+<span class="lineNum">     489 </span>                :<span class="lineNoCov">          0 :         LockBuffer(mapBuffer, BUFFER_LOCK_EXCLUSIVE);</span>
+<span class="lineNum">     490 </span>                :            : 
+<span class="lineNum">     491 </span>                :            :         /* NO EREPORT(ERROR) from here till changes are logged */
+<span class="lineNum">     492 </span>                :<span class="lineNoCov">          0 :         START_CRIT_SECTION();</span>
+<span class="lineNum">     493 </span>                :            : 
+<span class="lineNum">     494 </span>                :            :         /* Clear out the unwanted bytes. */
+<span class="lineNum">     495 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         MemSet(&amp;map[truncByte + 1], 0, MAPSIZE - (truncByte + 1));</span>
+<span class="lineNum">         </span>[<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>][<span class="branchNoExec" title="Branch 6 was not executed"> # </span><span class="branchNoExec" title="Branch 7 was not executed"> # </span>]
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 8 was not executed"> # </span><span class="branchNoExec" title="Branch 9 was not executed"> # </span>]
+<span class="lineNum">     496 </span>                :            : 
+<span class="lineNum">     497 </span>                :            :         /*----
+<span class="lineNum">     498 </span>                :            :          * Mask out the unwanted bits of the last remaining byte.
+<span class="lineNum">     499 </span>                :            :          *
+<span class="lineNum">     500 </span>                :            :          * ((1 &lt;&lt; 0) - 1) = 00000000
+<span class="lineNum">     501 </span>                :            :          * ((1 &lt;&lt; 1) - 1) = 00000001
+<span class="lineNum">     502 </span>                :            :          * ...
+<span class="lineNum">     503 </span>                :            :          * ((1 &lt;&lt; 6) - 1) = 00111111
+<span class="lineNum">     504 </span>                :            :          * ((1 &lt;&lt; 7) - 1) = 01111111
+<span class="lineNum">     505 </span>                :            :          *----
+<span class="lineNum">     506 </span>                :            :          */
+<span class="lineNum">     507 </span>                :<span class="lineNoCov">          0 :         map[truncByte] &amp;= (1 &lt;&lt; truncOffset) - 1;</span>
+<span class="lineNum">     508 </span>                :            : 
+<span class="lineNum">     509 </span>                :            :         /*
+<span class="lineNum">     510 </span>                :            :          * Truncation of a relation is WAL-logged at a higher-level, and we
+<span class="lineNum">     511 </span>                :            :          * will be called at WAL replay. But if checksums are enabled, we need
+<span class="lineNum">     512 </span>                :            :          * to still write a WAL record to protect against a torn page, if the
+<span class="lineNum">     513 </span>                :            :          * page is flushed to disk before the truncation WAL record. We cannot
+<span class="lineNum">     514 </span>                :            :          * use MarkBufferDirtyHint here, because that will not dirty the page
+<span class="lineNum">     515 </span>                :            :          * during recovery.
+<span class="lineNum">     516 </span>                :            :          */
+<span class="lineNum">     517 </span>                :<span class="lineNoCov">          0 :         MarkBufferDirty(mapBuffer);</span>
+<span class="lineNum">     518 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (!InRecovery &amp;&amp; RelationNeedsWAL(rel) &amp;&amp; XLogHintBitIsNeeded())</span>
+<span class="lineNum">         </span>[<span class="branchNoExec" title="Branch 5 was not executed"> # </span><span class="branchNoExec" title="Branch 6 was not executed"> # </span>][<span class="branchNoExec" title="Branch 7 was not executed"> # </span><span class="branchNoExec" title="Branch 8 was not executed"> # </span>]
+<span class="lineNum">     519 </span>                :<span class="lineNoCov">          0 :             log_newpage_buffer(mapBuffer, false);</span>
+<span class="lineNum">     520 </span>                :            : 
+<span class="lineNum">     521 </span>                :<span class="lineNoCov">          0 :         END_CRIT_SECTION();</span>
+<span class="lineNum">     522 </span>                :            : 
+<span class="lineNum">     523 </span>                :<span class="lineNoCov">          0 :         UnlockReleaseBuffer(mapBuffer);</span>
+<span class="lineNum">     524 </span>                :            :     }
+<span class="lineNum">     525 </span>                :            :     else
+<span class="lineNum">     526 </span>                :<span class="lineNoCov">          0 :         newnblocks = truncBlock;</span>
+<span class="lineNum">     527 </span>                :            : 
+<span class="lineNum">     528 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (smgrnblocks(rel-&gt;rd_smgr, VISIBILITYMAP_FORKNUM) &lt;= newnblocks)</span>
+<span class="lineNum">     529 </span>                :            :     {
+<span class="lineNum">     530 </span>                :            :         /* nothing to do, the file was already smaller than requested size */
+<span class="lineNum">     531 </span>                :<span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     532 </span>                :            :     }
+<span class="lineNum">     533 </span>                :            : 
+<span class="lineNum">     534 </span>                :            :     /* Truncate the unused VM pages, and send smgr inval message */
+<span class="lineNum">     535 </span>                :<span class="lineNoCov">          0 :     smgrtruncate(rel-&gt;rd_smgr, VISIBILITYMAP_FORKNUM, newnblocks);</span>
+<span class="lineNum">     536 </span>                :            : 
+<span class="lineNum">     537 </span>                :            :     /*
+<span class="lineNum">     538 </span>                :            :      * We might as well update the local smgr_vm_nblocks setting. smgrtruncate
+<span class="lineNum">     539 </span>                :            :      * sent an smgr cache inval message, which will cause other backends to
+<span class="lineNum">     540 </span>                :            :      * invalidate their copy of smgr_vm_nblocks, and this one too at the next
+<span class="lineNum">     541 </span>                :            :      * command boundary.  But this ensures it isn't outright wrong until then.
+<span class="lineNum">     542 </span>                :            :      */
+<span class="lineNum">     543 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (rel-&gt;rd_smgr)</span>
+<span class="lineNum">     544 </span>                :<span class="lineNoCov">          0 :         rel-&gt;rd_smgr-&gt;smgr_vm_nblocks = newnblocks;</span>
+<span class="lineNum">     545 </span>                :            : }
+<span class="lineNum">     546 </span>                :            : 
+<span class="lineNum">     547 </span>                :            : /*
+<span class="lineNum">     548 </span>                :            :  * Read a visibility map page.
+<span class="lineNum">     549 </span>                :            :  *
+<span class="lineNum">     550 </span>                :            :  * If the page doesn't exist, InvalidBuffer is returned, or if 'extend' is
+<span class="lineNum">     551 </span>                :            :  * true, the visibility map file is extended.
+<a name="552"><span class="lineNum">     552 </span>                :            :  */</a>
+<span class="lineNum">     553 </span>                :            : static Buffer
+<span class="lineNum">     554 </span>                :<span class="lineCov">      28882 : vm_readbuf(Relation rel, BlockNumber blkno, bool extend)</span>
+<span class="lineNum">     555 </span>                :            : {
+<span class="lineNum">     556 </span>                :            :     Buffer      buf;
+<span class="lineNum">     557 </span>                :            : 
+<span class="lineNum">     558 </span>                :            :     /*
+<span class="lineNum">     559 </span>                :            :      * We might not have opened the relation at the smgr level yet, or we
+<span class="lineNum">     560 </span>                :            :      * might have been forced to close it by a sinval message.  The code below
+<span class="lineNum">     561 </span>                :            :      * won't necessarily notice relation extension immediately when extend =
+<span class="lineNum">     562 </span>                :            :      * false, so we rely on sinval messages to ensure that our ideas about the
+<span class="lineNum">     563 </span>                :            :      * size of the map aren't too far out of date.
+<span class="lineNum">     564 </span>                :            :      */
+<span class="lineNum">     565 </span>        [<span class="branchCov" title="Branch 0 was taken 7 times"> + </span><span class="branchCov" title="Branch 1 was taken 28875 times"> + </span>]:<span class="lineCov">      28882 :     RelationOpenSmgr(rel);</span>
+<span class="lineNum">     566 </span>                :            : 
+<span class="lineNum">     567 </span>                :            :     /*
+<span class="lineNum">     568 </span>                :            :      * If we haven't cached the size of the visibility map fork yet, check it
+<span class="lineNum">     569 </span>                :            :      * first.
+<span class="lineNum">     570 </span>                :            :      */
+<span class="lineNum">     571 </span>        [<span class="branchCov" title="Branch 0 was taken 1388 times"> + </span><span class="branchCov" title="Branch 1 was taken 27494 times"> + </span>]:<span class="lineCov">      28882 :     if (rel-&gt;rd_smgr-&gt;smgr_vm_nblocks == InvalidBlockNumber)</span>
+<span class="lineNum">     572 </span>                :            :     {
+<span class="lineNum">     573 </span>        [<span class="branchCov" title="Branch 1 was taken 336 times"> + </span><span class="branchCov" title="Branch 2 was taken 1052 times"> + </span>]:<span class="lineCov">       1388 :         if (smgrexists(rel-&gt;rd_smgr, VISIBILITYMAP_FORKNUM))</span>
+<span class="lineNum">     574 </span>                :<span class="lineCov">        336 :             rel-&gt;rd_smgr-&gt;smgr_vm_nblocks = smgrnblocks(rel-&gt;rd_smgr,</span>
+<span class="lineNum">     575 </span>                :            :                                                         VISIBILITYMAP_FORKNUM);
+<span class="lineNum">     576 </span>                :            :         else
+<span class="lineNum">     577 </span>                :<span class="lineCov">       1052 :             rel-&gt;rd_smgr-&gt;smgr_vm_nblocks = 0;</span>
+<span class="lineNum">     578 </span>                :            :     }
+<span class="lineNum">     579 </span>                :            : 
+<span class="lineNum">     580 </span>                :            :     /* Handle requests beyond EOF */
+<span class="lineNum">     581 </span>        [<span class="branchCov" title="Branch 0 was taken 19814 times"> + </span><span class="branchCov" title="Branch 1 was taken 9068 times"> + </span>]:<span class="lineCov">      28882 :     if (blkno &gt;= rel-&gt;rd_smgr-&gt;smgr_vm_nblocks)</span>
+<span class="lineNum">     582 </span>                :            :     {
+<span class="lineNum">     583 </span>        [<span class="branchCov" title="Branch 0 was taken 7 times"> + </span><span class="branchCov" title="Branch 1 was taken 19807 times"> + </span>]:<span class="lineCov">      19814 :         if (extend)</span>
+<span class="lineNum">     584 </span>                :<span class="lineCov">          7 :             vm_extend(rel, blkno + 1);</span>
+<span class="lineNum">     585 </span>                :            :         else
+<span class="lineNum">     586 </span>                :<span class="lineCov">      19807 :             return InvalidBuffer;</span>
+<span class="lineNum">     587 </span>                :            :     }
+<span class="lineNum">     588 </span>                :            : 
+<span class="lineNum">     589 </span>                :            :     /*
+<span class="lineNum">     590 </span>                :            :      * Use ZERO_ON_ERROR mode, and initialize the page if necessary. It's
+<span class="lineNum">     591 </span>                :            :      * always safe to clear bits, so it's better to clear corrupt pages than
+<span class="lineNum">     592 </span>                :            :      * error out.
+<span class="lineNum">     593 </span>                :            :      *
+<span class="lineNum">     594 </span>                :            :      * The initialize-the-page part is trickier than it looks, because of the
+<span class="lineNum">     595 </span>                :            :      * possibility of multiple backends doing this concurrently, and our
+<span class="lineNum">     596 </span>                :            :      * desire to not uselessly take the buffer lock in the normal path where
+<span class="lineNum">     597 </span>                :            :      * the page is OK.  We must take the lock to initialize the page, so
+<span class="lineNum">     598 </span>                :            :      * recheck page newness after we have the lock, in case someone else
+<span class="lineNum">     599 </span>                :            :      * already did it.  Also, because we initially check PageIsNew with no
+<span class="lineNum">     600 </span>                :            :      * lock, it's possible to fall through and return the buffer while someone
+<span class="lineNum">     601 </span>                :            :      * else is still initializing the page (i.e., we might see pd_upper as set
+<span class="lineNum">     602 </span>                :            :      * but other page header fields are still zeroes).  This is harmless for
+<span class="lineNum">     603 </span>                :            :      * callers that will take a buffer lock themselves, but some callers
+<span class="lineNum">     604 </span>                :            :      * inspect the page without any lock at all.  The latter is OK only so
+<span class="lineNum">     605 </span>                :            :      * long as it doesn't depend on the page header having correct contents.
+<span class="lineNum">     606 </span>                :            :      * Current usage is safe because PageGetContents() does not require that.
+<span class="lineNum">     607 </span>                :            :      */
+<span class="lineNum">     608 </span>                :<span class="lineCov">       9075 :     buf = ReadBufferExtended(rel, VISIBILITYMAP_FORKNUM, blkno,</span>
+<span class="lineNum">     609 </span>                :            :                              RBM_ZERO_ON_ERROR, NULL);
+<span class="lineNum">     610 </span>[<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 9075 times"> + </span>][<span class="branchNoCov" title="Branch 2 was not taken"> - </span><span class="branchCov" title="Branch 3 was taken 9075 times"> + </span>]:<span class="lineCov">       9075 :     if (PageIsNew(BufferGetPage(buf)))</span>
+<span class="lineNum">     611 </span>                :            :     {
+<span class="lineNum">     612 </span>                :<span class="lineNoCov">          0 :         LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);</span>
+<span class="lineNum">     613 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (PageIsNew(BufferGetPage(buf)))</span>
+<span class="lineNum">     614 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             PageInit(BufferGetPage(buf), BLCKSZ, 0);</span>
+<span class="lineNum">     615 </span>                :<span class="lineNoCov">          0 :         LockBuffer(buf, BUFFER_LOCK_UNLOCK);</span>
+<span class="lineNum">     616 </span>                :            :     }
+<span class="lineNum">     617 </span>                :<span class="lineCov">       9075 :     return buf;</span>
+<span class="lineNum">     618 </span>                :            : }
+<span class="lineNum">     619 </span>                :            : 
+<span class="lineNum">     620 </span>                :            : /*
+<span class="lineNum">     621 </span>                :            :  * Ensure that the visibility map fork is at least vm_nblocks long, extending
+<span class="lineNum">     622 </span>                :            :  * it if necessary with zeroed pages.
+<a name="623"><span class="lineNum">     623 </span>                :            :  */</a>
+<span class="lineNum">     624 </span>                :            : static void
+<span class="lineNum">     625 </span>                :<span class="lineCov">          7 : vm_extend(Relation rel, BlockNumber vm_nblocks)</span>
+<span class="lineNum">     626 </span>                :            : {
+<span class="lineNum">     627 </span>                :            :     BlockNumber vm_nblocks_now;
+<span class="lineNum">     628 </span>                :            :     PGAlignedBlock pg;
+<span class="lineNum">     629 </span>                :            : 
+<span class="lineNum">     630 </span>                :<span class="lineCov">          7 :     PageInit((Page) pg.data, BLCKSZ, 0);</span>
+<span class="lineNum">     631 </span>                :            : 
+<span class="lineNum">     632 </span>                :            :     /*
+<span class="lineNum">     633 </span>                :            :      * We use the relation extension lock to lock out other backends trying to
+<span class="lineNum">     634 </span>                :            :      * extend the visibility map at the same time. It also locks out extension
+<span class="lineNum">     635 </span>                :            :      * of the main fork, unnecessarily, but extending the visibility map
+<span class="lineNum">     636 </span>                :            :      * happens seldom enough that it doesn't seem worthwhile to have a
+<span class="lineNum">     637 </span>                :            :      * separate lock tag type for it.
+<span class="lineNum">     638 </span>                :            :      *
+<span class="lineNum">     639 </span>                :            :      * Note that another backend might have extended or created the relation
+<span class="lineNum">     640 </span>                :            :      * by the time we get the lock.
+<span class="lineNum">     641 </span>                :            :      */
+<span class="lineNum">     642 </span>                :<span class="lineCov">          7 :     LockRelationForExtension(rel, ExclusiveLock);</span>
+<span class="lineNum">     643 </span>                :            : 
+<span class="lineNum">     644 </span>                :            :     /* Might have to re-open if a cache flush happened */
+<span class="lineNum">     645 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 7 times"> + </span>]:<span class="lineCov">          7 :     RelationOpenSmgr(rel);</span>
+<span class="lineNum">     646 </span>                :            : 
+<span class="lineNum">     647 </span>                :            :     /*
+<span class="lineNum">     648 </span>                :            :      * Create the file first if it doesn't exist.  If smgr_vm_nblocks is
+<span class="lineNum">     649 </span>                :            :      * positive then it must exist, no need for an smgrexists call.
+<span class="lineNum">     650 </span>                :            :      */
+<span class="lineNum">     651 </span>[<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 7 times"> + </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineCov">          7 :     if ((rel-&gt;rd_smgr-&gt;smgr_vm_nblocks == 0 ||</span>
+<span class="lineNum">     652 </span>        [<span class="branchCov" title="Branch 0 was taken 7 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">          7 :          rel-&gt;rd_smgr-&gt;smgr_vm_nblocks == InvalidBlockNumber) &amp;&amp;</span>
+<span class="lineNum">     653 </span>                :<span class="lineCov">          7 :         !smgrexists(rel-&gt;rd_smgr, VISIBILITYMAP_FORKNUM))</span>
+<span class="lineNum">     654 </span>                :<span class="lineCov">          7 :         smgrcreate(rel-&gt;rd_smgr, VISIBILITYMAP_FORKNUM, false);</span>
+<span class="lineNum">     655 </span>                :            : 
+<span class="lineNum">     656 </span>                :<span class="lineCov">          7 :     vm_nblocks_now = smgrnblocks(rel-&gt;rd_smgr, VISIBILITYMAP_FORKNUM);</span>
+<span class="lineNum">     657 </span>                :            : 
+<span class="lineNum">     658 </span>                :            :     /* Now extend the file */
+<span class="lineNum">     659 </span>        [<span class="branchCov" title="Branch 0 was taken 7 times"> + </span><span class="branchCov" title="Branch 1 was taken 7 times"> + </span>]:<span class="lineCov">         14 :     while (vm_nblocks_now &lt; vm_nblocks)</span>
+<span class="lineNum">     660 </span>                :            :     {
+<span class="lineNum">     661 </span>                :<span class="lineCov">          7 :         PageSetChecksumInplace((Page) pg.data, vm_nblocks_now);</span>
+<span class="lineNum">     662 </span>                :            : 
+<span class="lineNum">     663 </span>                :<span class="lineCov">          7 :         smgrextend(rel-&gt;rd_smgr, VISIBILITYMAP_FORKNUM, vm_nblocks_now,</span>
+<span class="lineNum">     664 </span>                :            :                    pg.data, false);
+<span class="lineNum">     665 </span>                :<span class="lineCov">          7 :         vm_nblocks_now++;</span>
+<span class="lineNum">     666 </span>                :            :     }
+<span class="lineNum">     667 </span>                :            : 
+<span class="lineNum">     668 </span>                :            :     /*
+<span class="lineNum">     669 </span>                :            :      * Send a shared-inval message to force other backends to close any smgr
+<span class="lineNum">     670 </span>                :            :      * references they may have for this rel, which we are about to change.
+<span class="lineNum">     671 </span>                :            :      * This is a useful optimization because it means that backends don't have
+<span class="lineNum">     672 </span>                :            :      * to keep checking for creation or extension of the file, which happens
+<span class="lineNum">     673 </span>                :            :      * infrequently.
+<span class="lineNum">     674 </span>                :            :      */
+<span class="lineNum">     675 </span>                :<span class="lineCov">          7 :     CacheInvalidateSmgr(rel-&gt;rd_smgr-&gt;smgr_rnode);</span>
+<span class="lineNum">     676 </span>                :            : 
+<span class="lineNum">     677 </span>                :            :     /* Update local cache with the up-to-date size */
+<span class="lineNum">     678 </span>                :<span class="lineCov">          7 :     rel-&gt;rd_smgr-&gt;smgr_vm_nblocks = vm_nblocks_now;</span>
+<span class="lineNum">     679 </span>                :            : 
+<span class="lineNum">     680 </span>                :<span class="lineCov">          7 :     UnlockRelationForExtension(rel, ExclusiveLock);</span>
+<span class="lineNum">     681 </span>                :<span class="lineCov">          7 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

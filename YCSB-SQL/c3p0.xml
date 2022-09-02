@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<c3p0-config>
+    <default-config>
+
+    </default-config> 
+
+    <named-config name="postgresql-localdb0">
+        <property name="driverClass">org.postgresql.Driver</property>
+        <property name="jdbcUrl">jdbc:postgresql://wsl2host:5432/localdb0?serverTimezone=UTC&amp;useServerPrepStmts=true&amp;cachePrepStmts=true</property>
+        <property name="user">postgres</property>
+        <property name="password">postgres</property>
+        <property name="initialPoolSize">60</property>
+        <property name="maxIdleTime">40</property>
+        <property name="maxPoolSize">120</property>
+        <property name="minPoolSize">60</property>
+    </named-config>
+    
+</c3p0-config>

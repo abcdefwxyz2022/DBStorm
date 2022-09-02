@@ -1,0 +1,180 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/access/heap/tuptoaster.c - functions</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/access/heap</a> - tuptoaster.c<span style="font-size: 80%;"> (<a href="tuptoaster.c.gcov.html">source</a> / functions)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">316</td>
+            <td class="headerCovTableEntry">703</td>
+            <td class="headerCovTableEntryLo">45.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:34:07</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">12</td>
+            <td class="headerCovTableEntry">23</td>
+            <td class="headerCovTableEntryLo">52.2 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">150</td>
+            <td class="headerCovTableEntry">540</td>
+            <td class="headerCovTableEntryLo">27.8 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <center>
+  <table width="60%" cellpadding=1 cellspacing=1 border=0>
+    <tr><td><br></td></tr>
+    <tr>
+      <td width="80%" class="tableHead">Function Name <span class="tableHeadSort"><img src="../../../../glass.png" width=10 height=14 alt="Sort by function name" title="Sort by function name" border=0></span></td>
+      <td width="20%" class="tableHead">Hit count <span class="tableHeadSort"><a href="tuptoaster.c.func-sort-c.html"><img src="../../../../updown.png" width=10 height=14 alt="Sort by hit count" title="Sort by hit count" border=0></a></span></td>
+    </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#100">heap_tuple_fetch_attr</a></td>
+              <td class="coverFnHi">2196</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#171">heap_tuple_untoast_attr</a></td>
+              <td class="coverFnHi">908204</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#260">heap_tuple_untoast_attr_slice</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#2422">init_toast_snapshot</a></td>
+              <td class="coverFnHi">2260</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#1309">toast_build_flattened_tuple</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#2403">toast_close_indexes</a></td>
+              <td class="coverFnHi">2456</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#1376">toast_compress_datum</a></td>
+              <td class="coverFnHi">247</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#427">toast_datum_size</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#2286">toast_decompress_datum</a></td>
+              <td class="coverFnHi">870</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#2314">toast_decompress_datum_slice</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#482">toast_delete</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#1733">toast_delete_datum</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#1879">toast_fetch_datum</a></td>
+              <td class="coverFnHi">2260</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#2052">toast_fetch_datum_slice</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#1097">toast_flatten_tuple</a></td>
+              <td class="coverFnHi">1134</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#1196">toast_flatten_tuple_to_datum</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#1434">toast_get_valid_index</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#552">toast_insert_or_update</a></td>
+              <td class="coverFnHi">148</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#2344">toast_open_indexes</a></td>
+              <td class="coverFnHi">2456</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#371">toast_raw_datum_size</a></td>
+              <td class="coverFnHi">4634824</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#1473">toast_save_datum</a></td>
+              <td class="coverFnHi">196</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#1856">toastid_valueid_exists</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+    <tr>
+              <td class="coverFn"><a href="tuptoaster.c.gcov.html#1808">toastrel_valueid_exists</a></td>
+              <td class="coverFnLo">0</td>
+            </tr>
+  </table>
+  <br>
+  </center>
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

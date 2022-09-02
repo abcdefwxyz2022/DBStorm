@@ -1,0 +1,1137 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/access/transam/clog.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/access/transam</a> - clog.c<span style="font-size: 80%;"> (source / <a href="clog.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">141</td>
+            <td class="headerCovTableEntry">237</td>
+            <td class="headerCovTableEntryLo">59.5 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:34:26</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">16</td>
+            <td class="headerCovTableEntry">22</td>
+            <td class="headerCovTableEntryLo">72.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">33</td>
+            <td class="headerCovTableEntry">98</td>
+            <td class="headerCovTableEntryLo">33.7 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">           Branch data     Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>                :            : /*-------------------------------------------------------------------------</a>
+<span class="lineNum">       2 </span>                :            :  *
+<span class="lineNum">       3 </span>                :            :  * clog.c
+<span class="lineNum">       4 </span>                :            :  *      PostgreSQL transaction-commit-log manager
+<span class="lineNum">       5 </span>                :            :  *
+<span class="lineNum">       6 </span>                :            :  * This module replaces the old &quot;pg_log&quot; access code, which treated pg_log
+<span class="lineNum">       7 </span>                :            :  * essentially like a relation, in that it went through the regular buffer
+<span class="lineNum">       8 </span>                :            :  * manager.  The problem with that was that there wasn't any good way to
+<span class="lineNum">       9 </span>                :            :  * recycle storage space for transactions so old that they'll never be
+<span class="lineNum">      10 </span>                :            :  * looked up again.  Now we use specialized access code so that the commit
+<span class="lineNum">      11 </span>                :            :  * log can be broken into relatively small, independent segments.
+<span class="lineNum">      12 </span>                :            :  *
+<span class="lineNum">      13 </span>                :            :  * XLOG interactions: this module generates an XLOG record whenever a new
+<span class="lineNum">      14 </span>                :            :  * CLOG page is initialized to zeroes.  Other writes of CLOG come from
+<span class="lineNum">      15 </span>                :            :  * recording of transaction commit or abort in xact.c, which generates its
+<span class="lineNum">      16 </span>                :            :  * own XLOG records for these events and will re-perform the status update
+<span class="lineNum">      17 </span>                :            :  * on redo; so we need make no additional XLOG entry here.  For synchronous
+<span class="lineNum">      18 </span>                :            :  * transaction commits, the XLOG is guaranteed flushed through the XLOG commit
+<span class="lineNum">      19 </span>                :            :  * record before we are called to log a commit, so the WAL rule &quot;write xlog
+<span class="lineNum">      20 </span>                :            :  * before data&quot; is satisfied automatically.  However, for async commits we
+<span class="lineNum">      21 </span>                :            :  * must track the latest LSN affecting each CLOG page, so that we can flush
+<span class="lineNum">      22 </span>                :            :  * XLOG that far and satisfy the WAL rule.  We don't have to worry about this
+<span class="lineNum">      23 </span>                :            :  * for aborts (whether sync or async), since the post-crash assumption would
+<span class="lineNum">      24 </span>                :            :  * be that such transactions failed anyway.
+<span class="lineNum">      25 </span>                :            :  *
+<span class="lineNum">      26 </span>                :            :  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+<span class="lineNum">      27 </span>                :            :  * Portions Copyright (c) 1994, Regents of the University of California
+<span class="lineNum">      28 </span>                :            :  *
+<span class="lineNum">      29 </span>                :            :  * src/backend/access/transam/clog.c
+<span class="lineNum">      30 </span>                :            :  *
+<span class="lineNum">      31 </span>                :            :  *-------------------------------------------------------------------------
+<span class="lineNum">      32 </span>                :            :  */
+<span class="lineNum">      33 </span>                :            : #include &quot;postgres.h&quot;
+<span class="lineNum">      34 </span>                :            : 
+<span class="lineNum">      35 </span>                :            : #include &quot;access/clog.h&quot;
+<span class="lineNum">      36 </span>                :            : #include &quot;access/slru.h&quot;
+<span class="lineNum">      37 </span>                :            : #include &quot;access/transam.h&quot;
+<span class="lineNum">      38 </span>                :            : #include &quot;access/xlog.h&quot;
+<span class="lineNum">      39 </span>                :            : #include &quot;access/xloginsert.h&quot;
+<span class="lineNum">      40 </span>                :            : #include &quot;access/xlogutils.h&quot;
+<span class="lineNum">      41 </span>                :            : #include &quot;miscadmin.h&quot;
+<span class="lineNum">      42 </span>                :            : #include &quot;pgstat.h&quot;
+<span class="lineNum">      43 </span>                :            : #include &quot;pg_trace.h&quot;
+<span class="lineNum">      44 </span>                :            : #include &quot;storage/proc.h&quot;
+<span class="lineNum">      45 </span>                :            : 
+<span class="lineNum">      46 </span>                :            : /*
+<span class="lineNum">      47 </span>                :            :  * Defines for CLOG page sizes.  A page is the same BLCKSZ as is used
+<span class="lineNum">      48 </span>                :            :  * everywhere else in Postgres.
+<span class="lineNum">      49 </span>                :            :  *
+<span class="lineNum">      50 </span>                :            :  * Note: because TransactionIds are 32 bits and wrap around at 0xFFFFFFFF,
+<span class="lineNum">      51 </span>                :            :  * CLOG page numbering also wraps around at 0xFFFFFFFF/CLOG_XACTS_PER_PAGE,
+<span class="lineNum">      52 </span>                :            :  * and CLOG segment numbering at
+<span class="lineNum">      53 </span>                :            :  * 0xFFFFFFFF/CLOG_XACTS_PER_PAGE/SLRU_PAGES_PER_SEGMENT.  We need take no
+<span class="lineNum">      54 </span>                :            :  * explicit notice of that fact in this module, except when comparing segment
+<span class="lineNum">      55 </span>                :            :  * and page numbers in TruncateCLOG (see CLOGPagePrecedes).
+<span class="lineNum">      56 </span>                :            :  */
+<span class="lineNum">      57 </span>                :            : 
+<span class="lineNum">      58 </span>                :            : /* We need two bits per xact, so four xacts fit in a byte */
+<span class="lineNum">      59 </span>                :            : #define CLOG_BITS_PER_XACT  2
+<span class="lineNum">      60 </span>                :            : #define CLOG_XACTS_PER_BYTE 4
+<span class="lineNum">      61 </span>                :            : #define CLOG_XACTS_PER_PAGE (BLCKSZ * CLOG_XACTS_PER_BYTE)
+<span class="lineNum">      62 </span>                :            : #define CLOG_XACT_BITMASK   ((1 &lt;&lt; CLOG_BITS_PER_XACT) - 1)
+<span class="lineNum">      63 </span>                :            : 
+<span class="lineNum">      64 </span>                :            : #define TransactionIdToPage(xid)    ((xid) / (TransactionId) CLOG_XACTS_PER_PAGE)
+<span class="lineNum">      65 </span>                :            : #define TransactionIdToPgIndex(xid) ((xid) % (TransactionId) CLOG_XACTS_PER_PAGE)
+<span class="lineNum">      66 </span>                :            : #define TransactionIdToByte(xid)    (TransactionIdToPgIndex(xid) / CLOG_XACTS_PER_BYTE)
+<span class="lineNum">      67 </span>                :            : #define TransactionIdToBIndex(xid)  ((xid) % (TransactionId) CLOG_XACTS_PER_BYTE)
+<span class="lineNum">      68 </span>                :            : 
+<span class="lineNum">      69 </span>                :            : /* We store the latest async LSN for each group of transactions */
+<span class="lineNum">      70 </span>                :            : #define CLOG_XACTS_PER_LSN_GROUP    32  /* keep this a power of 2 */
+<span class="lineNum">      71 </span>                :            : #define CLOG_LSNS_PER_PAGE  (CLOG_XACTS_PER_PAGE / CLOG_XACTS_PER_LSN_GROUP)
+<span class="lineNum">      72 </span>                :            : 
+<span class="lineNum">      73 </span>                :            : #define GetLSNIndex(slotno, xid)    ((slotno) * CLOG_LSNS_PER_PAGE + \
+<span class="lineNum">      74 </span>                :            :     ((xid) % (TransactionId) CLOG_XACTS_PER_PAGE) / CLOG_XACTS_PER_LSN_GROUP)
+<span class="lineNum">      75 </span>                :            : 
+<span class="lineNum">      76 </span>                :            : /*
+<span class="lineNum">      77 </span>                :            :  * The number of subtransactions below which we consider to apply clog group
+<span class="lineNum">      78 </span>                :            :  * update optimization.  Testing reveals that the number higher than this can
+<span class="lineNum">      79 </span>                :            :  * hurt performance.
+<span class="lineNum">      80 </span>                :            :  */
+<span class="lineNum">      81 </span>                :            : #define THRESHOLD_SUBTRANS_CLOG_OPT 5
+<span class="lineNum">      82 </span>                :            : 
+<span class="lineNum">      83 </span>                :            : /*
+<span class="lineNum">      84 </span>                :            :  * Link to shared-memory data structures for CLOG control
+<span class="lineNum">      85 </span>                :            :  */
+<span class="lineNum">      86 </span>                :            : static SlruCtlData ClogCtlData;
+<span class="lineNum">      87 </span>                :            : 
+<span class="lineNum">      88 </span>                :            : #define ClogCtl (&amp;ClogCtlData)
+<span class="lineNum">      89 </span>                :            : 
+<span class="lineNum">      90 </span>                :            : 
+<span class="lineNum">      91 </span>                :            : static int  ZeroCLOGPage(int pageno, bool writeXlog);
+<span class="lineNum">      92 </span>                :            : static bool CLOGPagePrecedes(int page1, int page2);
+<span class="lineNum">      93 </span>                :            : static void WriteZeroPageXlogRec(int pageno);
+<span class="lineNum">      94 </span>                :            : static void WriteTruncateXlogRec(int pageno, TransactionId oldestXact,
+<span class="lineNum">      95 </span>                :            :                                  Oid oldestXidDb);
+<span class="lineNum">      96 </span>                :            : static void TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
+<span class="lineNum">      97 </span>                :            :                                        TransactionId *subxids, XidStatus status,
+<span class="lineNum">      98 </span>                :            :                                        XLogRecPtr lsn, int pageno,
+<span class="lineNum">      99 </span>                :            :                                        bool all_xact_same_page);
+<span class="lineNum">     100 </span>                :            : static void TransactionIdSetStatusBit(TransactionId xid, XidStatus status,
+<span class="lineNum">     101 </span>                :            :                                       XLogRecPtr lsn, int slotno);
+<span class="lineNum">     102 </span>                :            : static void set_status_by_pages(int nsubxids, TransactionId *subxids,
+<span class="lineNum">     103 </span>                :            :                                 XidStatus status, XLogRecPtr lsn);
+<span class="lineNum">     104 </span>                :            : static bool TransactionGroupUpdateXidStatus(TransactionId xid,
+<span class="lineNum">     105 </span>                :            :                                             XidStatus status, XLogRecPtr lsn, int pageno);
+<span class="lineNum">     106 </span>                :            : static void TransactionIdSetPageStatusInternal(TransactionId xid, int nsubxids,
+<span class="lineNum">     107 </span>                :            :                                                TransactionId *subxids, XidStatus status,
+<span class="lineNum">     108 </span>                :            :                                                XLogRecPtr lsn, int pageno);
+<span class="lineNum">     109 </span>                :            : 
+<span class="lineNum">     110 </span>                :            : 
+<span class="lineNum">     111 </span>                :            : /*
+<span class="lineNum">     112 </span>                :            :  * TransactionIdSetTreeStatus
+<span class="lineNum">     113 </span>                :            :  *
+<span class="lineNum">     114 </span>                :            :  * Record the final state of transaction entries in the commit log for
+<span class="lineNum">     115 </span>                :            :  * a transaction and its subtransaction tree. Take care to ensure this is
+<span class="lineNum">     116 </span>                :            :  * efficient, and as atomic as possible.
+<span class="lineNum">     117 </span>                :            :  *
+<span class="lineNum">     118 </span>                :            :  * xid is a single xid to set status for. This will typically be
+<span class="lineNum">     119 </span>                :            :  * the top level transactionid for a top level commit or abort. It can
+<span class="lineNum">     120 </span>                :            :  * also be a subtransaction when we record transaction aborts.
+<span class="lineNum">     121 </span>                :            :  *
+<span class="lineNum">     122 </span>                :            :  * subxids is an array of xids of length nsubxids, representing subtransactions
+<span class="lineNum">     123 </span>                :            :  * in the tree of xid. In various cases nsubxids may be zero.
+<span class="lineNum">     124 </span>                :            :  *
+<span class="lineNum">     125 </span>                :            :  * lsn must be the WAL location of the commit record when recording an async
+<span class="lineNum">     126 </span>                :            :  * commit.  For a synchronous commit it can be InvalidXLogRecPtr, since the
+<span class="lineNum">     127 </span>                :            :  * caller guarantees the commit record is already flushed in that case.  It
+<span class="lineNum">     128 </span>                :            :  * should be InvalidXLogRecPtr for abort cases, too.
+<span class="lineNum">     129 </span>                :            :  *
+<span class="lineNum">     130 </span>                :            :  * In the commit case, atomicity is limited by whether all the subxids are in
+<span class="lineNum">     131 </span>                :            :  * the same CLOG page as xid.  If they all are, then the lock will be grabbed
+<span class="lineNum">     132 </span>                :            :  * only once, and the status will be set to committed directly.  Otherwise
+<span class="lineNum">     133 </span>                :            :  * we must
+<span class="lineNum">     134 </span>                :            :  *   1. set sub-committed all subxids that are not on the same page as the
+<span class="lineNum">     135 </span>                :            :  *      main xid
+<span class="lineNum">     136 </span>                :            :  *   2. atomically set committed the main xid and the subxids on the same page
+<span class="lineNum">     137 </span>                :            :  *   3. go over the first bunch again and set them committed
+<span class="lineNum">     138 </span>                :            :  * Note that as far as concurrent checkers are concerned, main transaction
+<span class="lineNum">     139 </span>                :            :  * commit as a whole is still atomic.
+<span class="lineNum">     140 </span>                :            :  *
+<span class="lineNum">     141 </span>                :            :  * Example:
+<span class="lineNum">     142 </span>                :            :  *      TransactionId t commits and has subxids t1, t2, t3, t4
+<span class="lineNum">     143 </span>                :            :  *      t is on page p1, t1 is also on p1, t2 and t3 are on p2, t4 is on p3
+<span class="lineNum">     144 </span>                :            :  *      1. update pages2-3:
+<span class="lineNum">     145 </span>                :            :  *                  page2: set t2,t3 as sub-committed
+<span class="lineNum">     146 </span>                :            :  *                  page3: set t4 as sub-committed
+<span class="lineNum">     147 </span>                :            :  *      2. update page1:
+<span class="lineNum">     148 </span>                :            :  *                  set t1 as sub-committed,
+<span class="lineNum">     149 </span>                :            :  *                  then set t as committed,
+<span class="lineNum">     150 </span>                :            :                     then set t1 as committed
+<span class="lineNum">     151 </span>                :            :  *      3. update pages2-3:
+<span class="lineNum">     152 </span>                :            :  *                  page2: set t2,t3 as committed
+<span class="lineNum">     153 </span>                :            :  *                  page3: set t4 as committed
+<span class="lineNum">     154 </span>                :            :  *
+<span class="lineNum">     155 </span>                :            :  * NB: this is a low-level routine and is NOT the preferred entry point
+<span class="lineNum">     156 </span>                :            :  * for most uses; functions in transam.c are the intended callers.
+<span class="lineNum">     157 </span>                :            :  *
+<span class="lineNum">     158 </span>                :            :  * XXX Think about issuing FADVISE_WILLNEED on pages that we will need,
+<span class="lineNum">     159 </span>                :            :  * but aren't yet in cache, as well as hinting pages not to fall out of
+<span class="lineNum">     160 </span>                :            :  * cache yet.
+<a name="161"><span class="lineNum">     161 </span>                :            :  */</a>
+<span class="lineNum">     162 </span>                :            : void
+<span class="lineNum">     163 </span>                :<span class="lineCov">      37546 : TransactionIdSetTreeStatus(TransactionId xid, int nsubxids,</span>
+<span class="lineNum">     164 </span>                :            :                            TransactionId *subxids, XidStatus status, XLogRecPtr lsn)
+<span class="lineNum">     165 </span>                :            : {
+<span class="lineNum">     166 </span>                :<span class="lineCov">      37546 :     int         pageno = TransactionIdToPage(xid);  /* get page of parent */</span>
+<span class="lineNum">     167 </span>                :            :     int         i;
+<span class="lineNum">     168 </span>                :            : 
+<span class="lineNum">     169 </span>                :            :     Assert(status == TRANSACTION_STATUS_COMMITTED ||
+<span class="lineNum">     170 </span>                :            :            status == TRANSACTION_STATUS_ABORTED);
+<span class="lineNum">     171 </span>                :            : 
+<span class="lineNum">     172 </span>                :            :     /*
+<span class="lineNum">     173 </span>                :            :      * See how many subxids, if any, are on the same page as the parent, if
+<span class="lineNum">     174 </span>                :            :      * any.
+<span class="lineNum">     175 </span>                :            :      */
+<span class="lineNum">     176 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 37546 times"> + </span>]:<span class="lineCov">      37546 :     for (i = 0; i &lt; nsubxids; i++)</span>
+<span class="lineNum">     177 </span>                :            :     {
+<span class="lineNum">     178 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (TransactionIdToPage(subxids[i]) != pageno)</span>
+<span class="lineNum">     179 </span>                :<span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     180 </span>                :            :     }
+<span class="lineNum">     181 </span>                :            : 
+<span class="lineNum">     182 </span>                :            :     /*
+<span class="lineNum">     183 </span>                :            :      * Do all items fit on a single page?
+<span class="lineNum">     184 </span>                :            :      */
+<span class="lineNum">     185 </span>        [<span class="branchCov" title="Branch 0 was taken 37546 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">      37546 :     if (i == nsubxids)</span>
+<span class="lineNum">     186 </span>                :            :     {
+<span class="lineNum">     187 </span>                :            :         /*
+<span class="lineNum">     188 </span>                :            :          * Set the parent and all subtransactions in a single call
+<span class="lineNum">     189 </span>                :            :          */
+<span class="lineNum">     190 </span>                :<span class="lineCov">      37546 :         TransactionIdSetPageStatus(xid, nsubxids, subxids, status, lsn,</span>
+<span class="lineNum">     191 </span>                :            :                                    pageno, true);
+<span class="lineNum">     192 </span>                :            :     }
+<span class="lineNum">     193 </span>                :            :     else
+<span class="lineNum">     194 </span>                :            :     {
+<span class="lineNum">     195 </span>                :<span class="lineNoCov">          0 :         int         nsubxids_on_first_page = i;</span>
+<span class="lineNum">     196 </span>                :            : 
+<span class="lineNum">     197 </span>                :            :         /*
+<span class="lineNum">     198 </span>                :            :          * If this is a commit then we care about doing this correctly (i.e.
+<span class="lineNum">     199 </span>                :            :          * using the subcommitted intermediate status).  By here, we know
+<span class="lineNum">     200 </span>                :            :          * we're updating more than one page of clog, so we must mark entries
+<span class="lineNum">     201 </span>                :            :          * that are *not* on the first page so that they show as subcommitted
+<span class="lineNum">     202 </span>                :            :          * before we then return to update the status to fully committed.
+<span class="lineNum">     203 </span>                :            :          *
+<span class="lineNum">     204 </span>                :            :          * To avoid touching the first page twice, skip marking subcommitted
+<span class="lineNum">     205 </span>                :            :          * for the subxids on that first page.
+<span class="lineNum">     206 </span>                :            :          */
+<span class="lineNum">     207 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (status == TRANSACTION_STATUS_COMMITTED)</span>
+<span class="lineNum">     208 </span>                :<span class="lineNoCov">          0 :             set_status_by_pages(nsubxids - nsubxids_on_first_page,</span>
+<span class="lineNum">     209 </span>                :<span class="lineNoCov">          0 :                                 subxids + nsubxids_on_first_page,</span>
+<span class="lineNum">     210 </span>                :            :                                 TRANSACTION_STATUS_SUB_COMMITTED, lsn);
+<span class="lineNum">     211 </span>                :            : 
+<span class="lineNum">     212 </span>                :            :         /*
+<span class="lineNum">     213 </span>                :            :          * Now set the parent and subtransactions on same page as the parent,
+<span class="lineNum">     214 </span>                :            :          * if any
+<span class="lineNum">     215 </span>                :            :          */
+<span class="lineNum">     216 </span>                :<span class="lineNoCov">          0 :         pageno = TransactionIdToPage(xid);</span>
+<span class="lineNum">     217 </span>                :<span class="lineNoCov">          0 :         TransactionIdSetPageStatus(xid, nsubxids_on_first_page, subxids, status,</span>
+<span class="lineNum">     218 </span>                :            :                                    lsn, pageno, false);
+<span class="lineNum">     219 </span>                :            : 
+<span class="lineNum">     220 </span>                :            :         /*
+<span class="lineNum">     221 </span>                :            :          * Now work through the rest of the subxids one clog page at a time,
+<span class="lineNum">     222 </span>                :            :          * starting from the second page onwards, like we did above.
+<span class="lineNum">     223 </span>                :            :          */
+<span class="lineNum">     224 </span>                :<span class="lineNoCov">          0 :         set_status_by_pages(nsubxids - nsubxids_on_first_page,</span>
+<span class="lineNum">     225 </span>                :<span class="lineNoCov">          0 :                             subxids + nsubxids_on_first_page,</span>
+<span class="lineNum">     226 </span>                :            :                             status, lsn);
+<span class="lineNum">     227 </span>                :            :     }
+<span class="lineNum">     228 </span>                :<span class="lineCov">      37546 : }</span>
+<span class="lineNum">     229 </span>                :            : 
+<span class="lineNum">     230 </span>                :            : /*
+<span class="lineNum">     231 </span>                :            :  * Helper for TransactionIdSetTreeStatus: set the status for a bunch of
+<span class="lineNum">     232 </span>                :            :  * transactions, chunking in the separate CLOG pages involved. We never
+<span class="lineNum">     233 </span>                :            :  * pass the whole transaction tree to this function, only subtransactions
+<span class="lineNum">     234 </span>                :            :  * that are on different pages to the top level transaction id.
+<a name="235"><span class="lineNum">     235 </span>                :            :  */</a>
+<span class="lineNum">     236 </span>                :            : static void
+<span class="lineNum">     237 </span>                :<span class="lineNoCov">          0 : set_status_by_pages(int nsubxids, TransactionId *subxids,</span>
+<span class="lineNum">     238 </span>                :            :                     XidStatus status, XLogRecPtr lsn)
+<span class="lineNum">     239 </span>                :            : {
+<span class="lineNum">     240 </span>                :<span class="lineNoCov">          0 :     int         pageno = TransactionIdToPage(subxids[0]);</span>
+<span class="lineNum">     241 </span>                :<span class="lineNoCov">          0 :     int         offset = 0;</span>
+<span class="lineNum">     242 </span>                :<span class="lineNoCov">          0 :     int         i = 0;</span>
+<span class="lineNum">     243 </span>                :            : 
+<span class="lineNum">     244 </span>                :            :     Assert(nsubxids &gt; 0);        /* else the pageno fetch above is unsafe */
+<span class="lineNum">     245 </span>                :            : 
+<span class="lineNum">     246 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     while (i &lt; nsubxids)</span>
+<span class="lineNum">     247 </span>                :            :     {
+<span class="lineNum">     248 </span>                :<span class="lineNoCov">          0 :         int         num_on_page = 0;</span>
+<span class="lineNum">     249 </span>                :            :         int         nextpageno;
+<span class="lineNum">     250 </span>                :            : 
+<span class="lineNum">     251 </span>                :            :         do
+<span class="lineNum">     252 </span>                :            :         {
+<span class="lineNum">     253 </span>                :<span class="lineNoCov">          0 :             nextpageno = TransactionIdToPage(subxids[i]);</span>
+<span class="lineNum">     254 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (nextpageno != pageno)</span>
+<span class="lineNum">     255 </span>                :<span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     256 </span>                :<span class="lineNoCov">          0 :             num_on_page++;</span>
+<span class="lineNum">     257 </span>                :<span class="lineNoCov">          0 :             i++;</span>
+<span class="lineNum">     258 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         } while (i &lt; nsubxids);</span>
+<span class="lineNum">     259 </span>                :            : 
+<span class="lineNum">     260 </span>                :<span class="lineNoCov">          0 :         TransactionIdSetPageStatus(InvalidTransactionId,</span>
+<span class="lineNum">     261 </span>                :<span class="lineNoCov">          0 :                                    num_on_page, subxids + offset,</span>
+<span class="lineNum">     262 </span>                :            :                                    status, lsn, pageno, false);
+<span class="lineNum">     263 </span>                :<span class="lineNoCov">          0 :         offset = i;</span>
+<span class="lineNum">     264 </span>                :<span class="lineNoCov">          0 :         pageno = nextpageno;</span>
+<span class="lineNum">     265 </span>                :            :     }
+<span class="lineNum">     266 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     267 </span>                :            : 
+<span class="lineNum">     268 </span>                :            : /*
+<span class="lineNum">     269 </span>                :            :  * Record the final state of transaction entries in the commit log for all
+<span class="lineNum">     270 </span>                :            :  * entries on a single page.  Atomic only on this page.
+<a name="271"><span class="lineNum">     271 </span>                :            :  */</a>
+<span class="lineNum">     272 </span>                :            : static void
+<span class="lineNum">     273 </span>                :<span class="lineCov">      37546 : TransactionIdSetPageStatus(TransactionId xid, int nsubxids,</span>
+<span class="lineNum">     274 </span>                :            :                            TransactionId *subxids, XidStatus status,
+<span class="lineNum">     275 </span>                :            :                            XLogRecPtr lsn, int pageno,
+<span class="lineNum">     276 </span>                :            :                            bool all_xact_same_page)
+<span class="lineNum">     277 </span>                :            : {
+<span class="lineNum">     278 </span>                :            :     /* Can't use group update when PGPROC overflows. */
+<span class="lineNum">     279 </span>                :            :     StaticAssertStmt(THRESHOLD_SUBTRANS_CLOG_OPT &lt;= PGPROC_MAX_CACHED_SUBXIDS,
+<span class="lineNum">     280 </span>                :            :                      &quot;group clog threshold less than PGPROC cached subxids&quot;);
+<span class="lineNum">     281 </span>                :            : 
+<span class="lineNum">     282 </span>                :            :     /*
+<span class="lineNum">     283 </span>                :            :      * When there is contention on CLogControlLock, we try to group multiple
+<span class="lineNum">     284 </span>                :            :      * updates; a single leader process will perform transaction status
+<span class="lineNum">     285 </span>                :            :      * updates for multiple backends so that the number of times
+<span class="lineNum">     286 </span>                :            :      * CLogControlLock needs to be acquired is reduced.
+<span class="lineNum">     287 </span>                :            :      *
+<span class="lineNum">     288 </span>                :            :      * For this optimization to be safe, the XID in MyPgXact and the subxids
+<span class="lineNum">     289 </span>                :            :      * in MyProc must be the same as the ones for which we're setting the
+<span class="lineNum">     290 </span>                :            :      * status.  Check that this is the case.
+<span class="lineNum">     291 </span>                :            :      *
+<span class="lineNum">     292 </span>                :            :      * For this optimization to be efficient, we shouldn't have too many
+<span class="lineNum">     293 </span>                :            :      * sub-XIDs and all of the XIDs for which we're adjusting clog should be
+<span class="lineNum">     294 </span>                :            :      * on the same page.  Check those conditions, too.
+<span class="lineNum">     295 </span>                :            :      */
+<span class="lineNum">     296 </span>[<span class="branchCov" title="Branch 0 was taken 37546 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchCov" title="Branch 2 was taken 37546 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">      37546 :     if (all_xact_same_page &amp;&amp; xid == MyPgXact-&gt;xid &amp;&amp;</span>
+<span class="lineNum">         </span>        [<span class="branchCov" title="Branch 4 was taken 37546 times"> + </span><span class="branchNoCov" title="Branch 5 was not taken"> - </span>]
+<span class="lineNum">     297 </span>        [<span class="branchCov" title="Branch 0 was taken 37546 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">      37546 :         nsubxids &lt;= THRESHOLD_SUBTRANS_CLOG_OPT &amp;&amp;</span>
+<span class="lineNum">     298 </span>        [<span class="branchCov" title="Branch 0 was taken 37546 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">      37546 :         nsubxids == MyPgXact-&gt;nxids &amp;&amp;</span>
+<span class="lineNum">     299 </span>                :<span class="lineCov">      37546 :         memcmp(subxids, MyProc-&gt;subxids.xids,</span>
+<span class="lineNum">     300 </span>                :            :                nsubxids * sizeof(TransactionId)) == 0)
+<span class="lineNum">     301 </span>                :            :     {
+<span class="lineNum">     302 </span>                :            :         /*
+<span class="lineNum">     303 </span>                :            :          * If we can immediately acquire CLogControlLock, we update the status
+<span class="lineNum">     304 </span>                :            :          * of our own XID and release the lock.  If not, try use group XID
+<span class="lineNum">     305 </span>                :            :          * update.  If that doesn't work out, fall back to waiting for the
+<span class="lineNum">     306 </span>                :            :          * lock to perform an update for this transaction only.
+<span class="lineNum">     307 </span>                :            :          */
+<span class="lineNum">     308 </span>        [<span class="branchCov" title="Branch 1 was taken 37535 times"> + </span><span class="branchCov" title="Branch 2 was taken 11 times"> + </span>]:<span class="lineCov">      37546 :         if (LWLockConditionalAcquire(CLogControlLock, LW_EXCLUSIVE))</span>
+<span class="lineNum">     309 </span>                :            :         {
+<span class="lineNum">     310 </span>                :            :             /* Got the lock without waiting!  Do the update. */
+<span class="lineNum">     311 </span>                :<span class="lineCov">      37535 :             TransactionIdSetPageStatusInternal(xid, nsubxids, subxids, status,</span>
+<span class="lineNum">     312 </span>                :            :                                                lsn, pageno);
+<span class="lineNum">     313 </span>                :<span class="lineCov">      37535 :             LWLockRelease(CLogControlLock);</span>
+<span class="lineNum">     314 </span>                :<span class="lineCov">      37535 :             return;</span>
+<span class="lineNum">     315 </span>                :            :         }
+<span class="lineNum">     316 </span>        [<span class="branchCov" title="Branch 1 was taken 11 times"> + </span><span class="branchNoCov" title="Branch 2 was not taken"> - </span>]:<span class="lineCov">         11 :         else if (TransactionGroupUpdateXidStatus(xid, status, lsn, pageno))</span>
+<span class="lineNum">     317 </span>                :            :         {
+<span class="lineNum">     318 </span>                :            :             /* Group update mechanism has done the work. */
+<span class="lineNum">     319 </span>                :<span class="lineCov">         11 :             return;</span>
+<span class="lineNum">     320 </span>                :            :         }
+<span class="lineNum">     321 </span>                :            : 
+<span class="lineNum">     322 </span>                :            :         /* Fall through only if update isn't done yet. */
+<span class="lineNum">     323 </span>                :            :     }
+<span class="lineNum">     324 </span>                :            : 
+<span class="lineNum">     325 </span>                :            :     /* Group update not applicable, or couldn't accept this page number. */
+<span class="lineNum">     326 </span>                :<span class="lineNoCov">          0 :     LWLockAcquire(CLogControlLock, LW_EXCLUSIVE);</span>
+<span class="lineNum">     327 </span>                :<span class="lineNoCov">          0 :     TransactionIdSetPageStatusInternal(xid, nsubxids, subxids, status,</span>
+<span class="lineNum">     328 </span>                :            :                                        lsn, pageno);
+<span class="lineNum">     329 </span>                :<span class="lineNoCov">          0 :     LWLockRelease(CLogControlLock);</span>
+<span class="lineNum">     330 </span>                :            : }
+<span class="lineNum">     331 </span>                :            : 
+<span class="lineNum">     332 </span>                :            : /*
+<span class="lineNum">     333 </span>                :            :  * Record the final state of transaction entry in the commit log
+<span class="lineNum">     334 </span>                :            :  *
+<span class="lineNum">     335 </span>                :            :  * We don't do any locking here; caller must handle that.
+<a name="336"><span class="lineNum">     336 </span>                :            :  */</a>
+<span class="lineNum">     337 </span>                :            : static void
+<span class="lineNum">     338 </span>                :<span class="lineCov">      37546 : TransactionIdSetPageStatusInternal(TransactionId xid, int nsubxids,</span>
+<span class="lineNum">     339 </span>                :            :                                    TransactionId *subxids, XidStatus status,
+<span class="lineNum">     340 </span>                :            :                                    XLogRecPtr lsn, int pageno)
+<span class="lineNum">     341 </span>                :            : {
+<span class="lineNum">     342 </span>                :            :     int         slotno;
+<span class="lineNum">     343 </span>                :            :     int         i;
+<span class="lineNum">     344 </span>                :            : 
+<span class="lineNum">     345 </span>                :            :     Assert(status == TRANSACTION_STATUS_COMMITTED ||
+<span class="lineNum">     346 </span>                :            :            status == TRANSACTION_STATUS_ABORTED ||
+<span class="lineNum">     347 </span>                :            :            (status == TRANSACTION_STATUS_SUB_COMMITTED &amp;&amp; !TransactionIdIsValid(xid)));
+<span class="lineNum">     348 </span>                :            :     Assert(LWLockHeldByMeInMode(CLogControlLock, LW_EXCLUSIVE));
+<span class="lineNum">     349 </span>                :            : 
+<span class="lineNum">     350 </span>                :            :     /*
+<span class="lineNum">     351 </span>                :            :      * If we're doing an async commit (ie, lsn is valid), then we must wait
+<span class="lineNum">     352 </span>                :            :      * for any active write on the page slot to complete.  Otherwise our
+<span class="lineNum">     353 </span>                :            :      * update could reach disk in that write, which will not do since we
+<span class="lineNum">     354 </span>                :            :      * mustn't let it reach disk until we've done the appropriate WAL flush.
+<span class="lineNum">     355 </span>                :            :      * But when lsn is invalid, it's OK to scribble on a page while it is
+<span class="lineNum">     356 </span>                :            :      * write-busy, since we don't care if the update reaches disk sooner than
+<span class="lineNum">     357 </span>                :            :      * we think.
+<span class="lineNum">     358 </span>                :            :      */
+<span class="lineNum">     359 </span>                :<span class="lineCov">      37546 :     slotno = SimpleLruReadPage(ClogCtl, pageno, XLogRecPtrIsInvalid(lsn), xid);</span>
+<span class="lineNum">     360 </span>                :            : 
+<span class="lineNum">     361 </span>                :            :     /*
+<span class="lineNum">     362 </span>                :            :      * Set the main transaction id, if any.
+<span class="lineNum">     363 </span>                :            :      *
+<span class="lineNum">     364 </span>                :            :      * If we update more than one xid on this page while it is being written
+<span class="lineNum">     365 </span>                :            :      * out, we might find that some of the bits go to disk and others don't.
+<span class="lineNum">     366 </span>                :            :      * If we are updating commits on the page with the top-level xid that
+<span class="lineNum">     367 </span>                :            :      * could break atomicity, so we subcommit the subxids first before we mark
+<span class="lineNum">     368 </span>                :            :      * the top-level commit.
+<span class="lineNum">     369 </span>                :            :      */
+<span class="lineNum">     370 </span>        [<span class="branchCov" title="Branch 0 was taken 37546 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">      37546 :     if (TransactionIdIsValid(xid))</span>
+<span class="lineNum">     371 </span>                :            :     {
+<span class="lineNum">     372 </span>                :            :         /* Subtransactions first, if needed ... */
+<span class="lineNum">     373 </span>        [<span class="branchCov" title="Branch 0 was taken 20036 times"> + </span><span class="branchCov" title="Branch 1 was taken 17510 times"> + </span>]:<span class="lineCov">      37546 :         if (status == TRANSACTION_STATUS_COMMITTED)</span>
+<span class="lineNum">     374 </span>                :            :         {
+<span class="lineNum">     375 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 20036 times"> + </span>]:<span class="lineCov">      20036 :             for (i = 0; i &lt; nsubxids; i++)</span>
+<span class="lineNum">     376 </span>                :            :             {
+<span class="lineNum">     377 </span>                :            :                 Assert(ClogCtl-&gt;shared-&gt;page_number[slotno] == TransactionIdToPage(subxids[i]));
+<span class="lineNum">     378 </span>                :<span class="lineNoCov">          0 :                 TransactionIdSetStatusBit(subxids[i],</span>
+<span class="lineNum">     379 </span>                :            :                                           TRANSACTION_STATUS_SUB_COMMITTED,
+<span class="lineNum">     380 </span>                :            :                                           lsn, slotno);
+<span class="lineNum">     381 </span>                :            :             }
+<span class="lineNum">     382 </span>                :            :         }
+<span class="lineNum">     383 </span>                :            : 
+<span class="lineNum">     384 </span>                :            :         /* ... then the main transaction */
+<span class="lineNum">     385 </span>                :<span class="lineCov">      37546 :         TransactionIdSetStatusBit(xid, status, lsn, slotno);</span>
+<span class="lineNum">     386 </span>                :            :     }
+<span class="lineNum">     387 </span>                :            : 
+<span class="lineNum">     388 </span>                :            :     /* Set the subtransactions */
+<span class="lineNum">     389 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 37546 times"> + </span>]:<span class="lineCov">      37546 :     for (i = 0; i &lt; nsubxids; i++)</span>
+<span class="lineNum">     390 </span>                :            :     {
+<span class="lineNum">     391 </span>                :            :         Assert(ClogCtl-&gt;shared-&gt;page_number[slotno] == TransactionIdToPage(subxids[i]));
+<span class="lineNum">     392 </span>                :<span class="lineNoCov">          0 :         TransactionIdSetStatusBit(subxids[i], status, lsn, slotno);</span>
+<span class="lineNum">     393 </span>                :            :     }
+<span class="lineNum">     394 </span>                :            : 
+<span class="lineNum">     395 </span>                :<span class="lineCov">      37546 :     ClogCtl-&gt;shared-&gt;page_dirty[slotno] = true;</span>
+<span class="lineNum">     396 </span>                :<span class="lineCov">      37546 : }</span>
+<span class="lineNum">     397 </span>                :            : 
+<span class="lineNum">     398 </span>                :            : /*
+<span class="lineNum">     399 </span>                :            :  * When we cannot immediately acquire CLogControlLock in exclusive mode at
+<span class="lineNum">     400 </span>                :            :  * commit time, add ourselves to a list of processes that need their XIDs
+<span class="lineNum">     401 </span>                :            :  * status update.  The first process to add itself to the list will acquire
+<span class="lineNum">     402 </span>                :            :  * CLogControlLock in exclusive mode and set transaction status as required
+<span class="lineNum">     403 </span>                :            :  * on behalf of all group members.  This avoids a great deal of contention
+<span class="lineNum">     404 </span>                :            :  * around CLogControlLock when many processes are trying to commit at once,
+<span class="lineNum">     405 </span>                :            :  * since the lock need not be repeatedly handed off from one committing
+<span class="lineNum">     406 </span>                :            :  * process to the next.
+<span class="lineNum">     407 </span>                :            :  *
+<span class="lineNum">     408 </span>                :            :  * Returns true when transaction status has been updated in clog; returns
+<span class="lineNum">     409 </span>                :            :  * false if we decided against applying the optimization because the page
+<span class="lineNum">     410 </span>                :            :  * number we need to update differs from those processes already waiting.
+<a name="411"><span class="lineNum">     411 </span>                :            :  */</a>
+<span class="lineNum">     412 </span>                :            : static bool
+<span class="lineNum">     413 </span>                :<span class="lineCov">         11 : TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,</span>
+<span class="lineNum">     414 </span>                :            :                                 XLogRecPtr lsn, int pageno)
+<span class="lineNum">     415 </span>                :            : {
+<span class="lineNum">     416 </span>                :<span class="lineCov">         11 :     volatile PROC_HDR *procglobal = ProcGlobal;</span>
+<span class="lineNum">     417 </span>                :<span class="lineCov">         11 :     PGPROC     *proc = MyProc;</span>
+<span class="lineNum">     418 </span>                :            :     uint32      nextidx;
+<span class="lineNum">     419 </span>                :            :     uint32      wakeidx;
+<span class="lineNum">     420 </span>                :            : 
+<span class="lineNum">     421 </span>                :            :     /* We should definitely have an XID whose status needs to be updated. */
+<span class="lineNum">     422 </span>                :            :     Assert(TransactionIdIsValid(xid));
+<span class="lineNum">     423 </span>                :            : 
+<span class="lineNum">     424 </span>                :            :     /*
+<span class="lineNum">     425 </span>                :            :      * Add ourselves to the list of processes needing a group XID status
+<span class="lineNum">     426 </span>                :            :      * update.
+<span class="lineNum">     427 </span>                :            :      */
+<span class="lineNum">     428 </span>                :<span class="lineCov">         11 :     proc-&gt;clogGroupMember = true;</span>
+<span class="lineNum">     429 </span>                :<span class="lineCov">         11 :     proc-&gt;clogGroupMemberXid = xid;</span>
+<span class="lineNum">     430 </span>                :<span class="lineCov">         11 :     proc-&gt;clogGroupMemberXidStatus = status;</span>
+<span class="lineNum">     431 </span>                :<span class="lineCov">         11 :     proc-&gt;clogGroupMemberPage = pageno;</span>
+<span class="lineNum">     432 </span>                :<span class="lineCov">         11 :     proc-&gt;clogGroupMemberLsn = lsn;</span>
+<span class="lineNum">     433 </span>                :            : 
+<span class="lineNum">     434 </span>                :<span class="lineCov">         11 :     nextidx = pg_atomic_read_u32(&amp;procglobal-&gt;clogGroupFirst);</span>
+<span class="lineNum">     435 </span>                :            : 
+<span class="lineNum">     436 </span>                :            :     while (true)
+<span class="lineNum">     437 </span>                :            :     {
+<span class="lineNum">     438 </span>                :            :         /*
+<span class="lineNum">     439 </span>                :            :          * Add the proc to list, if the clog page where we need to update the
+<span class="lineNum">     440 </span>                :            :          * current transaction status is same as group leader's clog page.
+<span class="lineNum">     441 </span>                :            :          *
+<span class="lineNum">     442 </span>                :            :          * There is a race condition here, which is that after doing the below
+<span class="lineNum">     443 </span>                :            :          * check and before adding this proc's clog update to a group, the
+<span class="lineNum">     444 </span>                :            :          * group leader might have already finished the group update for this
+<span class="lineNum">     445 </span>                :            :          * page and becomes group leader of another group. This will lead to a
+<span class="lineNum">     446 </span>                :            :          * situation where a single group can have different clog page
+<span class="lineNum">     447 </span>                :            :          * updates.  This isn't likely and will still work, just maybe a bit
+<span class="lineNum">     448 </span>                :            :          * less efficiently.
+<span class="lineNum">     449 </span>                :            :          */
+<span class="lineNum">     450 </span>[<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 11 times"> + </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineCov">         11 :         if (nextidx != INVALID_PGPROCNO &amp;&amp;</span>
+<span class="lineNum">     451 </span>                :<span class="lineNoCov">          0 :             ProcGlobal-&gt;allProcs[nextidx].clogGroupMemberPage != proc-&gt;clogGroupMemberPage)</span>
+<span class="lineNum">     452 </span>                :            :         {
+<span class="lineNum">     453 </span>                :<span class="lineNoCov">          0 :             proc-&gt;clogGroupMember = false;</span>
+<span class="lineNum">     454 </span>                :<span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     455 </span>                :            :         }
+<span class="lineNum">     456 </span>                :            : 
+<span class="lineNum">     457 </span>                :<span class="lineCov">         11 :         pg_atomic_write_u32(&amp;proc-&gt;clogGroupNext, nextidx);</span>
+<span class="lineNum">     458 </span>                :            : 
+<span class="lineNum">     459 </span>        [<span class="branchCov" title="Branch 1 was taken 11 times"> + </span><span class="branchNoCov" title="Branch 2 was not taken"> - </span>]:<span class="lineCov">         11 :         if (pg_atomic_compare_exchange_u32(&amp;procglobal-&gt;clogGroupFirst,</span>
+<span class="lineNum">     460 </span>                :            :                                            &amp;nextidx,
+<span class="lineNum">     461 </span>                :<span class="lineCov">         11 :                                            (uint32) proc-&gt;pgprocno))</span>
+<span class="lineNum">     462 </span>                :<span class="lineCov">         11 :             break;</span>
+<span class="lineNum">     463 </span>                :<span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">     464 </span>                :            : 
+<span class="lineNum">     465 </span>                :            :     /*
+<span class="lineNum">     466 </span>                :            :      * If the list was not empty, the leader will update the status of our
+<span class="lineNum">     467 </span>                :            :      * XID. It is impossible to have followers without a leader because the
+<span class="lineNum">     468 </span>                :            :      * first process that has added itself to the list will always have
+<span class="lineNum">     469 </span>                :            :      * nextidx as INVALID_PGPROCNO.
+<span class="lineNum">     470 </span>                :            :      */
+<span class="lineNum">     471 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 11 times"> + </span>]:<span class="lineCov">         11 :     if (nextidx != INVALID_PGPROCNO)</span>
+<span class="lineNum">     472 </span>                :            :     {
+<span class="lineNum">     473 </span>                :<span class="lineNoCov">          0 :         int         extraWaits = 0;</span>
+<span class="lineNum">     474 </span>                :            : 
+<span class="lineNum">     475 </span>                :            :         /* Sleep until the leader updates our XID status. */
+<span class="lineNum">     476 </span>                :<span class="lineNoCov">          0 :         pgstat_report_wait_start(WAIT_EVENT_CLOG_GROUP_UPDATE);</span>
+<span class="lineNum">     477 </span>                :            :         for (;;)
+<span class="lineNum">     478 </span>                :            :         {
+<span class="lineNum">     479 </span>                :            :             /* acts as a read barrier */
+<span class="lineNum">     480 </span>                :<span class="lineNoCov">          0 :             PGSemaphoreLock(proc-&gt;sem);</span>
+<span class="lineNum">     481 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (!proc-&gt;clogGroupMember)</span>
+<span class="lineNum">     482 </span>                :<span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     483 </span>                :<span class="lineNoCov">          0 :             extraWaits++;</span>
+<span class="lineNum">     484 </span>                :<span class="lineNoCov">          0 :         }</span>
+<span class="lineNum">     485 </span>                :<span class="lineNoCov">          0 :         pgstat_report_wait_end();</span>
+<span class="lineNum">     486 </span>                :            : 
+<span class="lineNum">     487 </span>                :            :         Assert(pg_atomic_read_u32(&amp;proc-&gt;clogGroupNext) == INVALID_PGPROCNO);
+<span class="lineNum">     488 </span>                :            : 
+<span class="lineNum">     489 </span>                :            :         /* Fix semaphore count for any absorbed wakeups */
+<span class="lineNum">     490 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         while (extraWaits-- &gt; 0)</span>
+<span class="lineNum">     491 </span>                :<span class="lineNoCov">          0 :             PGSemaphoreUnlock(proc-&gt;sem);</span>
+<span class="lineNum">     492 </span>                :<span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     493 </span>                :            :     }
+<span class="lineNum">     494 </span>                :            : 
+<span class="lineNum">     495 </span>                :            :     /* We are the leader.  Acquire the lock on behalf of everyone. */
+<span class="lineNum">     496 </span>                :<span class="lineCov">         11 :     LWLockAcquire(CLogControlLock, LW_EXCLUSIVE);</span>
+<span class="lineNum">     497 </span>                :            : 
+<span class="lineNum">     498 </span>                :            :     /*
+<span class="lineNum">     499 </span>                :            :      * Now that we've got the lock, clear the list of processes waiting for
+<span class="lineNum">     500 </span>                :            :      * group XID status update, saving a pointer to the head of the list.
+<span class="lineNum">     501 </span>                :            :      * Trying to pop elements one at a time could lead to an ABA problem.
+<span class="lineNum">     502 </span>                :            :      */
+<span class="lineNum">     503 </span>                :<span class="lineCov">         11 :     nextidx = pg_atomic_exchange_u32(&amp;procglobal-&gt;clogGroupFirst,</span>
+<span class="lineNum">     504 </span>                :            :                                      INVALID_PGPROCNO);
+<span class="lineNum">     505 </span>                :            : 
+<span class="lineNum">     506 </span>                :            :     /* Remember head of list so we can perform wakeups after dropping lock. */
+<span class="lineNum">     507 </span>                :<span class="lineCov">         11 :     wakeidx = nextidx;</span>
+<span class="lineNum">     508 </span>                :            : 
+<span class="lineNum">     509 </span>                :            :     /* Walk the list and update the status of all XIDs. */
+<span class="lineNum">     510 </span>        [<span class="branchCov" title="Branch 0 was taken 11 times"> + </span><span class="branchCov" title="Branch 1 was taken 11 times"> + </span>]:<span class="lineCov">         22 :     while (nextidx != INVALID_PGPROCNO)</span>
+<span class="lineNum">     511 </span>                :            :     {
+<span class="lineNum">     512 </span>                :<span class="lineCov">         11 :         PGPROC     *proc = &amp;ProcGlobal-&gt;allProcs[nextidx];</span>
+<span class="lineNum">     513 </span>                :<span class="lineCov">         11 :         PGXACT     *pgxact = &amp;ProcGlobal-&gt;allPgXact[nextidx];</span>
+<span class="lineNum">     514 </span>                :            : 
+<span class="lineNum">     515 </span>                :            :         /*
+<span class="lineNum">     516 </span>                :            :          * Transactions with more than THRESHOLD_SUBTRANS_CLOG_OPT sub-XIDs
+<span class="lineNum">     517 </span>                :            :          * should not use group XID status update mechanism.
+<span class="lineNum">     518 </span>                :            :          */
+<span class="lineNum">     519 </span>                :            :         Assert(pgxact-&gt;nxids &lt;= THRESHOLD_SUBTRANS_CLOG_OPT);
+<span class="lineNum">     520 </span>                :            : 
+<span class="lineNum">     521 </span>                :<span class="lineCov">         11 :         TransactionIdSetPageStatusInternal(proc-&gt;clogGroupMemberXid,</span>
+<span class="lineNum">     522 </span>                :<span class="lineCov">         11 :                                            pgxact-&gt;nxids,</span>
+<span class="lineNum">     523 </span>                :<span class="lineCov">         11 :                                            proc-&gt;subxids.xids,</span>
+<span class="lineNum">     524 </span>                :            :                                            proc-&gt;clogGroupMemberXidStatus,
+<span class="lineNum">     525 </span>                :            :                                            proc-&gt;clogGroupMemberLsn,
+<span class="lineNum">     526 </span>                :            :                                            proc-&gt;clogGroupMemberPage);
+<span class="lineNum">     527 </span>                :            : 
+<span class="lineNum">     528 </span>                :            :         /* Move to next proc in list. */
+<span class="lineNum">     529 </span>                :<span class="lineCov">         11 :         nextidx = pg_atomic_read_u32(&amp;proc-&gt;clogGroupNext);</span>
+<span class="lineNum">     530 </span>                :            :     }
+<span class="lineNum">     531 </span>                :            : 
+<span class="lineNum">     532 </span>                :            :     /* We're done with the lock now. */
+<span class="lineNum">     533 </span>                :<span class="lineCov">         11 :     LWLockRelease(CLogControlLock);</span>
+<span class="lineNum">     534 </span>                :            : 
+<span class="lineNum">     535 </span>                :            :     /*
+<span class="lineNum">     536 </span>                :            :      * Now that we've released the lock, go back and wake everybody up.  We
+<span class="lineNum">     537 </span>                :            :      * don't do this under the lock so as to keep lock hold times to a
+<span class="lineNum">     538 </span>                :            :      * minimum.
+<span class="lineNum">     539 </span>                :            :      */
+<span class="lineNum">     540 </span>        [<span class="branchCov" title="Branch 0 was taken 11 times"> + </span><span class="branchCov" title="Branch 1 was taken 11 times"> + </span>]:<span class="lineCov">         22 :     while (wakeidx != INVALID_PGPROCNO)</span>
+<span class="lineNum">     541 </span>                :            :     {
+<span class="lineNum">     542 </span>                :<span class="lineCov">         11 :         PGPROC     *proc = &amp;ProcGlobal-&gt;allProcs[wakeidx];</span>
+<span class="lineNum">     543 </span>                :            : 
+<span class="lineNum">     544 </span>                :<span class="lineCov">         11 :         wakeidx = pg_atomic_read_u32(&amp;proc-&gt;clogGroupNext);</span>
+<span class="lineNum">     545 </span>                :<span class="lineCov">         11 :         pg_atomic_write_u32(&amp;proc-&gt;clogGroupNext, INVALID_PGPROCNO);</span>
+<span class="lineNum">     546 </span>                :            : 
+<span class="lineNum">     547 </span>                :            :         /* ensure all previous writes are visible before follower continues. */
+<span class="lineNum">     548 </span>                :<span class="lineCov">         11 :         pg_write_barrier();</span>
+<span class="lineNum">     549 </span>                :            : 
+<span class="lineNum">     550 </span>                :<span class="lineCov">         11 :         proc-&gt;clogGroupMember = false;</span>
+<span class="lineNum">     551 </span>                :            : 
+<span class="lineNum">     552 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 11 times"> + </span>]:<span class="lineCov">         11 :         if (proc != MyProc)</span>
+<span class="lineNum">     553 </span>                :<span class="lineNoCov">          0 :             PGSemaphoreUnlock(proc-&gt;sem);</span>
+<span class="lineNum">     554 </span>                :            :     }
+<span class="lineNum">     555 </span>                :            : 
+<span class="lineNum">     556 </span>                :<span class="lineCov">         11 :     return true;</span>
+<span class="lineNum">     557 </span>                :            : }
+<span class="lineNum">     558 </span>                :            : 
+<span class="lineNum">     559 </span>                :            : /*
+<span class="lineNum">     560 </span>                :            :  * Sets the commit status of a single transaction.
+<span class="lineNum">     561 </span>                :            :  *
+<span class="lineNum">     562 </span>                :            :  * Must be called with CLogControlLock held
+<a name="563"><span class="lineNum">     563 </span>                :            :  */</a>
+<span class="lineNum">     564 </span>                :            : static void
+<span class="lineNum">     565 </span>                :<span class="lineCov">      37546 : TransactionIdSetStatusBit(TransactionId xid, XidStatus status, XLogRecPtr lsn, int slotno)</span>
+<span class="lineNum">     566 </span>                :            : {
+<span class="lineNum">     567 </span>                :<span class="lineCov">      37546 :     int         byteno = TransactionIdToByte(xid);</span>
+<span class="lineNum">     568 </span>                :<span class="lineCov">      37546 :     int         bshift = TransactionIdToBIndex(xid) * CLOG_BITS_PER_XACT;</span>
+<span class="lineNum">     569 </span>                :            :     char       *byteptr;
+<span class="lineNum">     570 </span>                :            :     char        byteval;
+<span class="lineNum">     571 </span>                :            :     char        curval;
+<span class="lineNum">     572 </span>                :            : 
+<span class="lineNum">     573 </span>                :<span class="lineCov">      37546 :     byteptr = ClogCtl-&gt;shared-&gt;page_buffer[slotno] + byteno;</span>
+<span class="lineNum">     574 </span>                :<span class="lineCov">      37546 :     curval = (*byteptr &gt;&gt; bshift) &amp; CLOG_XACT_BITMASK;</span>
+<span class="lineNum">     575 </span>                :            : 
+<span class="lineNum">     576 </span>                :            :     /*
+<span class="lineNum">     577 </span>                :            :      * When replaying transactions during recovery we still need to perform
+<span class="lineNum">     578 </span>                :            :      * the two phases of subcommit and then commit. However, some transactions
+<span class="lineNum">     579 </span>                :            :      * are already correctly marked, so we just treat those as a no-op which
+<span class="lineNum">     580 </span>                :            :      * allows us to keep the following Assert as restrictive as possible.
+<span class="lineNum">     581 </span>                :            :      */
+<span class="lineNum">     582 </span>[<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 37546 times"> + </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineCov">      37546 :     if (InRecovery &amp;&amp; status == TRANSACTION_STATUS_SUB_COMMITTED &amp;&amp;</span>
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>]
+<span class="lineNum">     583 </span>                :            :         curval == TRANSACTION_STATUS_COMMITTED)
+<span class="lineNum">     584 </span>                :<span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     585 </span>                :            : 
+<span class="lineNum">     586 </span>                :            :     /*
+<span class="lineNum">     587 </span>                :            :      * Current state change should be from 0 or subcommitted to target state
+<span class="lineNum">     588 </span>                :            :      * or we should already be there when replaying changes during recovery.
+<span class="lineNum">     589 </span>                :            :      */
+<span class="lineNum">     590 </span>                :            :     Assert(curval == 0 ||
+<span class="lineNum">     591 </span>                :            :            (curval == TRANSACTION_STATUS_SUB_COMMITTED &amp;&amp;
+<span class="lineNum">     592 </span>                :            :             status != TRANSACTION_STATUS_IN_PROGRESS) ||
+<span class="lineNum">     593 </span>                :            :            curval == status);
+<span class="lineNum">     594 </span>                :            : 
+<span class="lineNum">     595 </span>                :            :     /* note this assumes exclusive access to the clog page */
+<span class="lineNum">     596 </span>                :<span class="lineCov">      37546 :     byteval = *byteptr;</span>
+<span class="lineNum">     597 </span>                :<span class="lineCov">      37546 :     byteval &amp;= ~(((1 &lt;&lt; CLOG_BITS_PER_XACT) - 1) &lt;&lt; bshift);</span>
+<span class="lineNum">     598 </span>                :<span class="lineCov">      37546 :     byteval |= (status &lt;&lt; bshift);</span>
+<span class="lineNum">     599 </span>                :<span class="lineCov">      37546 :     *byteptr = byteval;</span>
+<span class="lineNum">     600 </span>                :            : 
+<span class="lineNum">     601 </span>                :            :     /*
+<span class="lineNum">     602 </span>                :            :      * Update the group LSN if the transaction completion LSN is higher.
+<span class="lineNum">     603 </span>                :            :      *
+<span class="lineNum">     604 </span>                :            :      * Note: lsn will be invalid when supplied during InRecovery processing,
+<span class="lineNum">     605 </span>                :            :      * so we don't need to do anything special to avoid LSN updates during
+<span class="lineNum">     606 </span>                :            :      * recovery. After recovery completes the next clog change will set the
+<span class="lineNum">     607 </span>                :            :      * LSN correctly.
+<span class="lineNum">     608 </span>                :            :      */
+<span class="lineNum">     609 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 37546 times"> + </span>]:<span class="lineCov">      37546 :     if (!XLogRecPtrIsInvalid(lsn))</span>
+<span class="lineNum">     610 </span>                :            :     {
+<span class="lineNum">     611 </span>                :<span class="lineNoCov">          0 :         int         lsnindex = GetLSNIndex(slotno, xid);</span>
+<span class="lineNum">     612 </span>                :            : 
+<span class="lineNum">     613 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (ClogCtl-&gt;shared-&gt;group_lsn[lsnindex] &lt; lsn)</span>
+<span class="lineNum">     614 </span>                :<span class="lineNoCov">          0 :             ClogCtl-&gt;shared-&gt;group_lsn[lsnindex] = lsn;</span>
+<span class="lineNum">     615 </span>                :            :     }
+<span class="lineNum">     616 </span>                :            : }
+<span class="lineNum">     617 </span>                :            : 
+<span class="lineNum">     618 </span>                :            : /*
+<span class="lineNum">     619 </span>                :            :  * Interrogate the state of a transaction in the commit log.
+<span class="lineNum">     620 </span>                :            :  *
+<span class="lineNum">     621 </span>                :            :  * Aside from the actual commit status, this function returns (into *lsn)
+<span class="lineNum">     622 </span>                :            :  * an LSN that is late enough to be able to guarantee that if we flush up to
+<span class="lineNum">     623 </span>                :            :  * that LSN then we will have flushed the transaction's commit record to disk.
+<span class="lineNum">     624 </span>                :            :  * The result is not necessarily the exact LSN of the transaction's commit
+<span class="lineNum">     625 </span>                :            :  * record!  For example, for long-past transactions (those whose clog pages
+<span class="lineNum">     626 </span>                :            :  * already migrated to disk), we'll return InvalidXLogRecPtr.  Also, because
+<span class="lineNum">     627 </span>                :            :  * we group transactions on the same clog page to conserve storage, we might
+<span class="lineNum">     628 </span>                :            :  * return the LSN of a later transaction that falls into the same group.
+<span class="lineNum">     629 </span>                :            :  *
+<span class="lineNum">     630 </span>                :            :  * NB: this is a low-level routine and is NOT the preferred entry point
+<span class="lineNum">     631 </span>                :            :  * for most uses; TransactionLogFetch() in transam.c is the intended caller.
+<a name="632"><span class="lineNum">     632 </span>                :            :  */</a>
+<span class="lineNum">     633 </span>                :            : XidStatus
+<span class="lineNum">     634 </span>                :<span class="lineCov">     114189 : TransactionIdGetStatus(TransactionId xid, XLogRecPtr *lsn)</span>
+<span class="lineNum">     635 </span>                :            : {
+<span class="lineNum">     636 </span>                :<span class="lineCov">     114189 :     int         pageno = TransactionIdToPage(xid);</span>
+<span class="lineNum">     637 </span>                :<span class="lineCov">     114189 :     int         byteno = TransactionIdToByte(xid);</span>
+<span class="lineNum">     638 </span>                :<span class="lineCov">     114189 :     int         bshift = TransactionIdToBIndex(xid) * CLOG_BITS_PER_XACT;</span>
+<span class="lineNum">     639 </span>                :            :     int         slotno;
+<span class="lineNum">     640 </span>                :            :     int         lsnindex;
+<span class="lineNum">     641 </span>                :            :     char       *byteptr;
+<span class="lineNum">     642 </span>                :            :     XidStatus   status;
+<span class="lineNum">     643 </span>                :            : 
+<span class="lineNum">     644 </span>                :            :     /* lock is acquired by SimpleLruReadPage_ReadOnly */
+<span class="lineNum">     645 </span>                :            : 
+<span class="lineNum">     646 </span>                :<span class="lineCov">     114189 :     slotno = SimpleLruReadPage_ReadOnly(ClogCtl, pageno, xid);</span>
+<span class="lineNum">     647 </span>                :<span class="lineCov">     114189 :     byteptr = ClogCtl-&gt;shared-&gt;page_buffer[slotno] + byteno;</span>
+<span class="lineNum">     648 </span>                :            : 
+<span class="lineNum">     649 </span>                :<span class="lineCov">     114189 :     status = (*byteptr &gt;&gt; bshift) &amp; CLOG_XACT_BITMASK;</span>
+<span class="lineNum">     650 </span>                :            : 
+<span class="lineNum">     651 </span>                :<span class="lineCov">     114189 :     lsnindex = GetLSNIndex(slotno, xid);</span>
+<span class="lineNum">     652 </span>                :<span class="lineCov">     114189 :     *lsn = ClogCtl-&gt;shared-&gt;group_lsn[lsnindex];</span>
+<span class="lineNum">     653 </span>                :            : 
+<span class="lineNum">     654 </span>                :<span class="lineCov">     114189 :     LWLockRelease(CLogControlLock);</span>
+<span class="lineNum">     655 </span>                :            : 
+<span class="lineNum">     656 </span>                :<span class="lineCov">     114189 :     return status;</span>
+<span class="lineNum">     657 </span>                :            : }
+<span class="lineNum">     658 </span>                :            : 
+<span class="lineNum">     659 </span>                :            : /*
+<span class="lineNum">     660 </span>                :            :  * Number of shared CLOG buffers.
+<span class="lineNum">     661 </span>                :            :  *
+<span class="lineNum">     662 </span>                :            :  * On larger multi-processor systems, it is possible to have many CLOG page
+<span class="lineNum">     663 </span>                :            :  * requests in flight at one time which could lead to disk access for CLOG
+<span class="lineNum">     664 </span>                :            :  * page if the required page is not found in memory.  Testing revealed that we
+<span class="lineNum">     665 </span>                :            :  * can get the best performance by having 128 CLOG buffers, more than that it
+<span class="lineNum">     666 </span>                :            :  * doesn't improve performance.
+<span class="lineNum">     667 </span>                :            :  *
+<span class="lineNum">     668 </span>                :            :  * Unconditionally keeping the number of CLOG buffers to 128 did not seem like
+<span class="lineNum">     669 </span>                :            :  * a good idea, because it would increase the minimum amount of shared memory
+<span class="lineNum">     670 </span>                :            :  * required to start, which could be a problem for people running very small
+<span class="lineNum">     671 </span>                :            :  * configurations.  The following formula seems to represent a reasonable
+<span class="lineNum">     672 </span>                :            :  * compromise: people with very low values for shared_buffers will get fewer
+<span class="lineNum">     673 </span>                :            :  * CLOG buffers as well, and everyone else will get 128.
+<a name="674"><span class="lineNum">     674 </span>                :            :  */</a>
+<span class="lineNum">     675 </span>                :            : Size
+<span class="lineNum">     676 </span>                :<span class="lineCov">      48064 : CLOGShmemBuffers(void)</span>
+<span class="lineNum">     677 </span>                :            : {
+<span class="lineNum">     678 </span>[<span class="branchCov" title="Branch 0 was taken 48064 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchNoCov" title="Branch 2 was not taken"> - </span><span class="branchCov" title="Branch 3 was taken 48064 times"> + </span>]:<span class="lineCov">      48064 :     return Min(128, Max(4, NBuffers / 512));</span>
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>]
+<span class="lineNum">     679 </span>                :            : }
+<span class="lineNum">     680 </span>                :            : 
+<span class="lineNum">     681 </span>                :            : /*
+<span class="lineNum">     682 </span>                :            :  * Initialization of shared memory for CLOG
+<a name="683"><span class="lineNum">     683 </span>                :            :  */</a>
+<span class="lineNum">     684 </span>                :            : Size
+<span class="lineNum">     685 </span>                :<span class="lineCov">      24032 : CLOGShmemSize(void)</span>
+<span class="lineNum">     686 </span>                :            : {
+<span class="lineNum">     687 </span>                :<span class="lineCov">      24032 :     return SimpleLruShmemSize(CLOGShmemBuffers(), CLOG_LSNS_PER_PAGE);</span>
+<span class="lineNum">     688 </span>                :            : }
+<a name="689"><span class="lineNum">     689 </span>                :            : </a>
+<span class="lineNum">     690 </span>                :            : void
+<span class="lineNum">     691 </span>                :<span class="lineCov">      24032 : CLOGShmemInit(void)</span>
+<span class="lineNum">     692 </span>                :            : {
+<span class="lineNum">     693 </span>                :<span class="lineCov">      24032 :     ClogCtl-&gt;PagePrecedes = CLOGPagePrecedes;</span>
+<span class="lineNum">     694 </span>                :<span class="lineCov">      24032 :     SimpleLruInit(ClogCtl, &quot;clog&quot;, CLOGShmemBuffers(), CLOG_LSNS_PER_PAGE,</span>
+<span class="lineNum">     695 </span>                :<span class="lineCov">      24032 :                   CLogControlLock, &quot;pg_xact&quot;, LWTRANCHE_CLOG_BUFFERS);</span>
+<span class="lineNum">     696 </span>                :            :     SlruPagePrecedesUnitTests(ClogCtl, CLOG_XACTS_PER_PAGE);
+<span class="lineNum">     697 </span>                :<span class="lineCov">      24032 : }</span>
+<span class="lineNum">     698 </span>                :            : 
+<span class="lineNum">     699 </span>                :            : /*
+<span class="lineNum">     700 </span>                :            :  * This func must be called ONCE on system install.  It creates
+<span class="lineNum">     701 </span>                :            :  * the initial CLOG segment.  (The CLOG directory is assumed to
+<span class="lineNum">     702 </span>                :            :  * have been created by initdb, and CLOGShmemInit must have been
+<span class="lineNum">     703 </span>                :            :  * called already.)
+<a name="704"><span class="lineNum">     704 </span>                :            :  */</a>
+<span class="lineNum">     705 </span>                :            : void
+<span class="lineNum">     706 </span>                :<span class="lineNoCov">          0 : BootStrapCLOG(void)</span>
+<span class="lineNum">     707 </span>                :            : {
+<span class="lineNum">     708 </span>                :            :     int         slotno;
+<span class="lineNum">     709 </span>                :            : 
+<span class="lineNum">     710 </span>                :<span class="lineNoCov">          0 :     LWLockAcquire(CLogControlLock, LW_EXCLUSIVE);</span>
+<span class="lineNum">     711 </span>                :            : 
+<span class="lineNum">     712 </span>                :            :     /* Create and zero the first page of the commit log */
+<span class="lineNum">     713 </span>                :<span class="lineNoCov">          0 :     slotno = ZeroCLOGPage(0, false);</span>
+<span class="lineNum">     714 </span>                :            : 
+<span class="lineNum">     715 </span>                :            :     /* Make sure it's written out */
+<span class="lineNum">     716 </span>                :<span class="lineNoCov">          0 :     SimpleLruWritePage(ClogCtl, slotno);</span>
+<span class="lineNum">     717 </span>                :            :     Assert(!ClogCtl-&gt;shared-&gt;page_dirty[slotno]);
+<span class="lineNum">     718 </span>                :            : 
+<span class="lineNum">     719 </span>                :<span class="lineNoCov">          0 :     LWLockRelease(CLogControlLock);</span>
+<span class="lineNum">     720 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     721 </span>                :            : 
+<span class="lineNum">     722 </span>                :            : /*
+<span class="lineNum">     723 </span>                :            :  * Initialize (or reinitialize) a page of CLOG to zeroes.
+<span class="lineNum">     724 </span>                :            :  * If writeXlog is true, also emit an XLOG record saying we did this.
+<span class="lineNum">     725 </span>                :            :  *
+<span class="lineNum">     726 </span>                :            :  * The page is not actually written, just set up in shared memory.
+<span class="lineNum">     727 </span>                :            :  * The slot number of the new page is returned.
+<span class="lineNum">     728 </span>                :            :  *
+<span class="lineNum">     729 </span>                :            :  * Control lock must be held at entry, and will be held at exit.
+<a name="730"><span class="lineNum">     730 </span>                :            :  */</a>
+<span class="lineNum">     731 </span>                :            : static int
+<span class="lineNum">     732 </span>                :<span class="lineCov">          1 : ZeroCLOGPage(int pageno, bool writeXlog)</span>
+<span class="lineNum">     733 </span>                :            : {
+<span class="lineNum">     734 </span>                :            :     int         slotno;
+<span class="lineNum">     735 </span>                :            : 
+<span class="lineNum">     736 </span>                :<span class="lineCov">          1 :     slotno = SimpleLruZeroPage(ClogCtl, pageno);</span>
+<span class="lineNum">     737 </span>                :            : 
+<span class="lineNum">     738 </span>        [<span class="branchCov" title="Branch 0 was taken 1 time"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">          1 :     if (writeXlog)</span>
+<span class="lineNum">     739 </span>                :<span class="lineCov">          1 :         WriteZeroPageXlogRec(pageno);</span>
+<span class="lineNum">     740 </span>                :            : 
+<span class="lineNum">     741 </span>                :<span class="lineCov">          1 :     return slotno;</span>
+<span class="lineNum">     742 </span>                :            : }
+<span class="lineNum">     743 </span>                :            : 
+<span class="lineNum">     744 </span>                :            : /*
+<span class="lineNum">     745 </span>                :            :  * This must be called ONCE during postmaster or standalone-backend startup,
+<span class="lineNum">     746 </span>                :            :  * after StartupXLOG has initialized ShmemVariableCache-&gt;nextFullXid.
+<a name="747"><span class="lineNum">     747 </span>                :            :  */</a>
+<span class="lineNum">     748 </span>                :            : void
+<span class="lineNum">     749 </span>                :<span class="lineCov">          2 : StartupCLOG(void)</span>
+<span class="lineNum">     750 </span>                :            : {
+<span class="lineNum">     751 </span>                :<span class="lineCov">          2 :     TransactionId xid = XidFromFullTransactionId(ShmemVariableCache-&gt;nextFullXid);</span>
+<span class="lineNum">     752 </span>                :<span class="lineCov">          2 :     int         pageno = TransactionIdToPage(xid);</span>
+<span class="lineNum">     753 </span>                :            : 
+<span class="lineNum">     754 </span>                :<span class="lineCov">          2 :     LWLockAcquire(CLogControlLock, LW_EXCLUSIVE);</span>
+<span class="lineNum">     755 </span>                :            : 
+<span class="lineNum">     756 </span>                :            :     /*
+<span class="lineNum">     757 </span>                :            :      * Initialize our idea of the latest page number.
+<span class="lineNum">     758 </span>                :            :      */
+<span class="lineNum">     759 </span>                :<span class="lineCov">          2 :     ClogCtl-&gt;shared-&gt;latest_page_number = pageno;</span>
+<span class="lineNum">     760 </span>                :            : 
+<span class="lineNum">     761 </span>                :<span class="lineCov">          2 :     LWLockRelease(CLogControlLock);</span>
+<span class="lineNum">     762 </span>                :<span class="lineCov">          2 : }</span>
+<span class="lineNum">     763 </span>                :            : 
+<span class="lineNum">     764 </span>                :            : /*
+<span class="lineNum">     765 </span>                :            :  * This must be called ONCE at the end of startup/recovery.
+<a name="766"><span class="lineNum">     766 </span>                :            :  */</a>
+<span class="lineNum">     767 </span>                :            : void
+<span class="lineNum">     768 </span>                :<span class="lineCov">          2 : TrimCLOG(void)</span>
+<span class="lineNum">     769 </span>                :            : {
+<span class="lineNum">     770 </span>                :<span class="lineCov">          2 :     TransactionId xid = XidFromFullTransactionId(ShmemVariableCache-&gt;nextFullXid);</span>
+<span class="lineNum">     771 </span>                :<span class="lineCov">          2 :     int         pageno = TransactionIdToPage(xid);</span>
+<span class="lineNum">     772 </span>                :            : 
+<span class="lineNum">     773 </span>                :<span class="lineCov">          2 :     LWLockAcquire(CLogControlLock, LW_EXCLUSIVE);</span>
+<span class="lineNum">     774 </span>                :            : 
+<span class="lineNum">     775 </span>                :            :     /*
+<span class="lineNum">     776 </span>                :            :      * Re-Initialize our idea of the latest page number.
+<span class="lineNum">     777 </span>                :            :      */
+<span class="lineNum">     778 </span>                :<span class="lineCov">          2 :     ClogCtl-&gt;shared-&gt;latest_page_number = pageno;</span>
+<span class="lineNum">     779 </span>                :            : 
+<span class="lineNum">     780 </span>                :            :     /*
+<span class="lineNum">     781 </span>                :            :      * Zero out the remainder of the current clog page.  Under normal
+<span class="lineNum">     782 </span>                :            :      * circumstances it should be zeroes already, but it seems at least
+<span class="lineNum">     783 </span>                :            :      * theoretically possible that XLOG replay will have settled on a nextXID
+<span class="lineNum">     784 </span>                :            :      * value that is less than the last XID actually used and marked by the
+<span class="lineNum">     785 </span>                :            :      * previous database lifecycle (since subtransaction commit writes clog
+<span class="lineNum">     786 </span>                :            :      * but makes no WAL entry).  Let's just be safe. (We need not worry about
+<span class="lineNum">     787 </span>                :            :      * pages beyond the current one, since those will be zeroed when first
+<span class="lineNum">     788 </span>                :            :      * used.  For the same reason, there is no need to do anything when
+<span class="lineNum">     789 </span>                :            :      * nextFullXid is exactly at a page boundary; and it's likely that the
+<span class="lineNum">     790 </span>                :            :      * &quot;current&quot; page doesn't exist yet in that case.)
+<span class="lineNum">     791 </span>                :            :      */
+<span class="lineNum">     792 </span>        [<span class="branchCov" title="Branch 0 was taken 2 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">          2 :     if (TransactionIdToPgIndex(xid) != 0)</span>
+<span class="lineNum">     793 </span>                :            :     {
+<span class="lineNum">     794 </span>                :<span class="lineCov">          2 :         int         byteno = TransactionIdToByte(xid);</span>
+<span class="lineNum">     795 </span>                :<span class="lineCov">          2 :         int         bshift = TransactionIdToBIndex(xid) * CLOG_BITS_PER_XACT;</span>
+<span class="lineNum">     796 </span>                :            :         int         slotno;
+<span class="lineNum">     797 </span>                :            :         char       *byteptr;
+<span class="lineNum">     798 </span>                :            : 
+<span class="lineNum">     799 </span>                :<span class="lineCov">          2 :         slotno = SimpleLruReadPage(ClogCtl, pageno, false, xid);</span>
+<span class="lineNum">     800 </span>                :<span class="lineCov">          2 :         byteptr = ClogCtl-&gt;shared-&gt;page_buffer[slotno] + byteno;</span>
+<span class="lineNum">     801 </span>                :            : 
+<span class="lineNum">     802 </span>                :            :         /* Zero so-far-unused positions in the current byte */
+<span class="lineNum">     803 </span>                :<span class="lineCov">          2 :         *byteptr &amp;= (1 &lt;&lt; bshift) - 1;</span>
+<span class="lineNum">     804 </span>                :            :         /* Zero the rest of the page */
+<span class="lineNum">     805 </span>[<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 2 times"> + </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineCov">          2 :         MemSet(byteptr + 1, 0, BLCKSZ - byteno - 1);</span>
+<span class="lineNum">         </span>[<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>][<span class="branchNoExec" title="Branch 6 was not executed"> # </span><span class="branchNoExec" title="Branch 7 was not executed"> # </span>]
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 8 was not executed"> # </span><span class="branchNoExec" title="Branch 9 was not executed"> # </span>]
+<span class="lineNum">     806 </span>                :            : 
+<span class="lineNum">     807 </span>                :<span class="lineCov">          2 :         ClogCtl-&gt;shared-&gt;page_dirty[slotno] = true;</span>
+<span class="lineNum">     808 </span>                :            :     }
+<span class="lineNum">     809 </span>                :            : 
+<span class="lineNum">     810 </span>                :<span class="lineCov">          2 :     LWLockRelease(CLogControlLock);</span>
+<span class="lineNum">     811 </span>                :<span class="lineCov">          2 : }</span>
+<span class="lineNum">     812 </span>                :            : 
+<span class="lineNum">     813 </span>                :            : /*
+<span class="lineNum">     814 </span>                :            :  * This must be called ONCE during postmaster or standalone-backend shutdown
+<a name="815"><span class="lineNum">     815 </span>                :            :  */</a>
+<span class="lineNum">     816 </span>                :            : void
+<span class="lineNum">     817 </span>                :<span class="lineCov">          1 : ShutdownCLOG(void)</span>
+<span class="lineNum">     818 </span>                :            : {
+<span class="lineNum">     819 </span>                :            :     /* Flush dirty CLOG pages to disk */
+<span class="lineNum">     820 </span>                :<span class="lineCov">          1 :     TRACE_POSTGRESQL_CLOG_CHECKPOINT_START(false);</span>
+<span class="lineNum">     821 </span>                :<span class="lineCov">          1 :     SimpleLruFlush(ClogCtl, false);</span>
+<span class="lineNum">     822 </span>                :            : 
+<span class="lineNum">     823 </span>                :            :     /*
+<span class="lineNum">     824 </span>                :            :      * fsync pg_xact to ensure that any files flushed previously are durably
+<span class="lineNum">     825 </span>                :            :      * on disk.
+<span class="lineNum">     826 </span>                :            :      */
+<span class="lineNum">     827 </span>                :<span class="lineCov">          1 :     fsync_fname(&quot;pg_xact&quot;, true);</span>
+<span class="lineNum">     828 </span>                :            : 
+<span class="lineNum">     829 </span>                :<span class="lineCov">          1 :     TRACE_POSTGRESQL_CLOG_CHECKPOINT_DONE(false);</span>
+<span class="lineNum">     830 </span>                :<span class="lineCov">          1 : }</span>
+<span class="lineNum">     831 </span>                :            : 
+<span class="lineNum">     832 </span>                :            : /*
+<span class="lineNum">     833 </span>                :            :  * Perform a checkpoint --- either during shutdown, or on-the-fly
+<a name="834"><span class="lineNum">     834 </span>                :            :  */</a>
+<span class="lineNum">     835 </span>                :            : void
+<span class="lineNum">     836 </span>                :<span class="lineCov">         57 : CheckPointCLOG(void)</span>
+<span class="lineNum">     837 </span>                :            : {
+<span class="lineNum">     838 </span>                :            :     /* Flush dirty CLOG pages to disk */
+<span class="lineNum">     839 </span>                :<span class="lineCov">         57 :     TRACE_POSTGRESQL_CLOG_CHECKPOINT_START(true);</span>
+<span class="lineNum">     840 </span>                :<span class="lineCov">         57 :     SimpleLruFlush(ClogCtl, true);</span>
+<span class="lineNum">     841 </span>                :<span class="lineCov">         57 :     TRACE_POSTGRESQL_CLOG_CHECKPOINT_DONE(true);</span>
+<span class="lineNum">     842 </span>                :<span class="lineCov">         57 : }</span>
+<span class="lineNum">     843 </span>                :            : 
+<span class="lineNum">     844 </span>                :            : 
+<span class="lineNum">     845 </span>                :            : /*
+<span class="lineNum">     846 </span>                :            :  * Make sure that CLOG has room for a newly-allocated XID.
+<span class="lineNum">     847 </span>                :            :  *
+<span class="lineNum">     848 </span>                :            :  * NB: this is called while holding XidGenLock.  We want it to be very fast
+<span class="lineNum">     849 </span>                :            :  * most of the time; even when it's not so fast, no actual I/O need happen
+<span class="lineNum">     850 </span>                :            :  * unless we're forced to write out a dirty clog or xlog page to make room
+<span class="lineNum">     851 </span>                :            :  * in shared memory.
+<a name="852"><span class="lineNum">     852 </span>                :            :  */</a>
+<span class="lineNum">     853 </span>                :            : void
+<span class="lineNum">     854 </span>                :<span class="lineCov">      37546 : ExtendCLOG(TransactionId newestXact)</span>
+<span class="lineNum">     855 </span>                :            : {
+<span class="lineNum">     856 </span>                :            :     int         pageno;
+<span class="lineNum">     857 </span>                :            : 
+<span class="lineNum">     858 </span>                :            :     /*
+<span class="lineNum">     859 </span>                :            :      * No work except at first XID of a page.  But beware: just after
+<span class="lineNum">     860 </span>                :            :      * wraparound, the first XID of page zero is FirstNormalTransactionId.
+<span class="lineNum">     861 </span>                :            :      */
+<span class="lineNum">     862 </span>[<span class="branchCov" title="Branch 0 was taken 37545 times"> + </span><span class="branchCov" title="Branch 1 was taken 1 time"> + </span>][<span class="branchCov" title="Branch 2 was taken 37545 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">      37546 :     if (TransactionIdToPgIndex(newestXact) != 0 &amp;&amp;</span>
+<span class="lineNum">     863 </span>                :            :         !TransactionIdEquals(newestXact, FirstNormalTransactionId))
+<span class="lineNum">     864 </span>                :<span class="lineCov">      37545 :         return;</span>
+<span class="lineNum">     865 </span>                :            : 
+<span class="lineNum">     866 </span>                :<span class="lineCov">          1 :     pageno = TransactionIdToPage(newestXact);</span>
+<span class="lineNum">     867 </span>                :            : 
+<span class="lineNum">     868 </span>                :<span class="lineCov">          1 :     LWLockAcquire(CLogControlLock, LW_EXCLUSIVE);</span>
+<span class="lineNum">     869 </span>                :            : 
+<span class="lineNum">     870 </span>                :            :     /* Zero the page and make an XLOG entry about it */
+<span class="lineNum">     871 </span>                :<span class="lineCov">          1 :     ZeroCLOGPage(pageno, true);</span>
+<span class="lineNum">     872 </span>                :            : 
+<span class="lineNum">     873 </span>                :<span class="lineCov">          1 :     LWLockRelease(CLogControlLock);</span>
+<span class="lineNum">     874 </span>                :            : }
+<span class="lineNum">     875 </span>                :            : 
+<span class="lineNum">     876 </span>                :            : 
+<span class="lineNum">     877 </span>                :            : /*
+<span class="lineNum">     878 </span>                :            :  * Remove all CLOG segments before the one holding the passed transaction ID
+<span class="lineNum">     879 </span>                :            :  *
+<span class="lineNum">     880 </span>                :            :  * Before removing any CLOG data, we must flush XLOG to disk, to ensure
+<span class="lineNum">     881 </span>                :            :  * that any recently-emitted HEAP_FREEZE records have reached disk; otherwise
+<span class="lineNum">     882 </span>                :            :  * a crash and restart might leave us with some unfrozen tuples referencing
+<span class="lineNum">     883 </span>                :            :  * removed CLOG data.  We choose to emit a special TRUNCATE XLOG record too.
+<span class="lineNum">     884 </span>                :            :  * Replaying the deletion from XLOG is not critical, since the files could
+<span class="lineNum">     885 </span>                :            :  * just as well be removed later, but doing so prevents a long-running hot
+<span class="lineNum">     886 </span>                :            :  * standby server from acquiring an unreasonably bloated CLOG directory.
+<span class="lineNum">     887 </span>                :            :  *
+<span class="lineNum">     888 </span>                :            :  * Since CLOG segments hold a large number of transactions, the opportunity to
+<span class="lineNum">     889 </span>                :            :  * actually remove a segment is fairly rare, and so it seems best not to do
+<span class="lineNum">     890 </span>                :            :  * the XLOG flush unless we have confirmed that there is a removable segment.
+<a name="891"><span class="lineNum">     891 </span>                :            :  */</a>
+<span class="lineNum">     892 </span>                :            : void
+<span class="lineNum">     893 </span>                :<span class="lineNoCov">          0 : TruncateCLOG(TransactionId oldestXact, Oid oldestxid_datoid)</span>
+<span class="lineNum">     894 </span>                :            : {
+<span class="lineNum">     895 </span>                :            :     int         cutoffPage;
+<span class="lineNum">     896 </span>                :            : 
+<span class="lineNum">     897 </span>                :            :     /*
+<span class="lineNum">     898 </span>                :            :      * The cutoff point is the start of the segment containing oldestXact. We
+<span class="lineNum">     899 </span>                :            :      * pass the *page* containing oldestXact to SimpleLruTruncate.
+<span class="lineNum">     900 </span>                :            :      */
+<span class="lineNum">     901 </span>                :<span class="lineNoCov">          0 :     cutoffPage = TransactionIdToPage(oldestXact);</span>
+<span class="lineNum">     902 </span>                :            : 
+<span class="lineNum">     903 </span>                :            :     /* Check to see if there's any files that could be removed */
+<span class="lineNum">     904 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (!SlruScanDirectory(ClogCtl, SlruScanDirCbReportPresence, &amp;cutoffPage))</span>
+<span class="lineNum">     905 </span>                :<span class="lineNoCov">          0 :         return;                 /* nothing to remove */</span>
+<span class="lineNum">     906 </span>                :            : 
+<span class="lineNum">     907 </span>                :            :     /*
+<span class="lineNum">     908 </span>                :            :      * Advance oldestClogXid before truncating clog, so concurrent xact status
+<span class="lineNum">     909 </span>                :            :      * lookups can ensure they don't attempt to access truncated-away clog.
+<span class="lineNum">     910 </span>                :            :      *
+<span class="lineNum">     911 </span>                :            :      * It's only necessary to do this if we will actually truncate away clog
+<span class="lineNum">     912 </span>                :            :      * pages.
+<span class="lineNum">     913 </span>                :            :      */
+<span class="lineNum">     914 </span>                :<span class="lineNoCov">          0 :     AdvanceOldestClogXid(oldestXact);</span>
+<span class="lineNum">     915 </span>                :            : 
+<span class="lineNum">     916 </span>                :            :     /*
+<span class="lineNum">     917 </span>                :            :      * Write XLOG record and flush XLOG to disk. We record the oldest xid
+<span class="lineNum">     918 </span>                :            :      * we're keeping information about here so we can ensure that it's always
+<span class="lineNum">     919 </span>                :            :      * ahead of clog truncation in case we crash, and so a standby finds out
+<span class="lineNum">     920 </span>                :            :      * the new valid xid before the next checkpoint.
+<span class="lineNum">     921 </span>                :            :      */
+<span class="lineNum">     922 </span>                :<span class="lineNoCov">          0 :     WriteTruncateXlogRec(cutoffPage, oldestXact, oldestxid_datoid);</span>
+<span class="lineNum">     923 </span>                :            : 
+<span class="lineNum">     924 </span>                :            :     /* Now we can remove the old CLOG segment(s) */
+<span class="lineNum">     925 </span>                :<span class="lineNoCov">          0 :     SimpleLruTruncate(ClogCtl, cutoffPage);</span>
+<span class="lineNum">     926 </span>                :            : }
+<span class="lineNum">     927 </span>                :            : 
+<span class="lineNum">     928 </span>                :            : 
+<span class="lineNum">     929 </span>                :            : /*
+<span class="lineNum">     930 </span>                :            :  * Decide whether a CLOG page number is &quot;older&quot; for truncation purposes.
+<span class="lineNum">     931 </span>                :            :  *
+<span class="lineNum">     932 </span>                :            :  * We need to use comparison of TransactionIds here in order to do the right
+<span class="lineNum">     933 </span>                :            :  * thing with wraparound XID arithmetic.  However, TransactionIdPrecedes()
+<span class="lineNum">     934 </span>                :            :  * would get weird about permanent xact IDs.  So, offset both such that xid1,
+<span class="lineNum">     935 </span>                :            :  * xid2, and xid2 + CLOG_XACTS_PER_PAGE - 1 are all normal XIDs; this offset
+<span class="lineNum">     936 </span>                :            :  * is relevant to page 0 and to the page preceding page 0.
+<span class="lineNum">     937 </span>                :            :  *
+<span class="lineNum">     938 </span>                :            :  * The page containing oldestXact-2^31 is the important edge case.  The
+<span class="lineNum">     939 </span>                :            :  * portion of that page equaling or following oldestXact-2^31 is expendable,
+<span class="lineNum">     940 </span>                :            :  * but the portion preceding oldestXact-2^31 is not.  When oldestXact-2^31 is
+<span class="lineNum">     941 </span>                :            :  * the first XID of a page and segment, the entire page and segment is
+<span class="lineNum">     942 </span>                :            :  * expendable, and we could truncate the segment.  Recognizing that case would
+<span class="lineNum">     943 </span>                :            :  * require making oldestXact, not just the page containing oldestXact,
+<span class="lineNum">     944 </span>                :            :  * available to this callback.  The benefit would be rare and small, so we
+<span class="lineNum">     945 </span>                :            :  * don't optimize that edge case.
+<a name="946"><span class="lineNum">     946 </span>                :            :  */</a>
+<span class="lineNum">     947 </span>                :            : static bool
+<span class="lineNum">     948 </span>                :<span class="lineNoCov">          0 : CLOGPagePrecedes(int page1, int page2)</span>
+<span class="lineNum">     949 </span>                :            : {
+<span class="lineNum">     950 </span>                :            :     TransactionId xid1;
+<span class="lineNum">     951 </span>                :            :     TransactionId xid2;
+<span class="lineNum">     952 </span>                :            : 
+<span class="lineNum">     953 </span>                :<span class="lineNoCov">          0 :     xid1 = ((TransactionId) page1) * CLOG_XACTS_PER_PAGE;</span>
+<span class="lineNum">     954 </span>                :<span class="lineNoCov">          0 :     xid1 += FirstNormalTransactionId + 1;</span>
+<span class="lineNum">     955 </span>                :<span class="lineNoCov">          0 :     xid2 = ((TransactionId) page2) * CLOG_XACTS_PER_PAGE;</span>
+<span class="lineNum">     956 </span>                :<span class="lineNoCov">          0 :     xid2 += FirstNormalTransactionId + 1;</span>
+<span class="lineNum">     957 </span>                :            : 
+<span class="lineNum">     958 </span>  [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span><span class="branchNoExec" title="Branch 4 was not executed"> # </span>]:<span class="lineNoCov">          0 :     return (TransactionIdPrecedes(xid1, xid2) &amp;&amp;</span>
+<span class="lineNum">     959 </span>                :<span class="lineNoCov">          0 :             TransactionIdPrecedes(xid1, xid2 + CLOG_XACTS_PER_PAGE - 1));</span>
+<span class="lineNum">     960 </span>                :            : }
+<span class="lineNum">     961 </span>                :            : 
+<span class="lineNum">     962 </span>                :            : 
+<span class="lineNum">     963 </span>                :            : /*
+<span class="lineNum">     964 </span>                :            :  * Write a ZEROPAGE xlog record
+<a name="965"><span class="lineNum">     965 </span>                :            :  */</a>
+<span class="lineNum">     966 </span>                :            : static void
+<span class="lineNum">     967 </span>                :<span class="lineCov">          1 : WriteZeroPageXlogRec(int pageno)</span>
+<span class="lineNum">     968 </span>                :            : {
+<span class="lineNum">     969 </span>                :<span class="lineCov">          1 :     XLogBeginInsert();</span>
+<span class="lineNum">     970 </span>                :<span class="lineCov">          1 :     XLogRegisterData((char *) (&amp;pageno), sizeof(int));</span>
+<span class="lineNum">     971 </span>                :<span class="lineCov">          1 :     (void) XLogInsert(RM_CLOG_ID, CLOG_ZEROPAGE);</span>
+<span class="lineNum">     972 </span>                :<span class="lineCov">          1 : }</span>
+<span class="lineNum">     973 </span>                :            : 
+<span class="lineNum">     974 </span>                :            : /*
+<span class="lineNum">     975 </span>                :            :  * Write a TRUNCATE xlog record
+<span class="lineNum">     976 </span>                :            :  *
+<span class="lineNum">     977 </span>                :            :  * We must flush the xlog record to disk before returning --- see notes
+<span class="lineNum">     978 </span>                :            :  * in TruncateCLOG().
+<a name="979"><span class="lineNum">     979 </span>                :            :  */</a>
+<span class="lineNum">     980 </span>                :            : static void
+<span class="lineNum">     981 </span>                :<span class="lineNoCov">          0 : WriteTruncateXlogRec(int pageno, TransactionId oldestXact, Oid oldestXactDb)</span>
+<span class="lineNum">     982 </span>                :            : {
+<span class="lineNum">     983 </span>                :            :     XLogRecPtr  recptr;
+<span class="lineNum">     984 </span>                :            :     xl_clog_truncate xlrec;
+<span class="lineNum">     985 </span>                :            : 
+<span class="lineNum">     986 </span>                :<span class="lineNoCov">          0 :     xlrec.pageno = pageno;</span>
+<span class="lineNum">     987 </span>                :<span class="lineNoCov">          0 :     xlrec.oldestXact = oldestXact;</span>
+<span class="lineNum">     988 </span>                :<span class="lineNoCov">          0 :     xlrec.oldestXactDb = oldestXactDb;</span>
+<span class="lineNum">     989 </span>                :            : 
+<span class="lineNum">     990 </span>                :<span class="lineNoCov">          0 :     XLogBeginInsert();</span>
+<span class="lineNum">     991 </span>                :<span class="lineNoCov">          0 :     XLogRegisterData((char *) (&amp;xlrec), sizeof(xl_clog_truncate));</span>
+<span class="lineNum">     992 </span>                :<span class="lineNoCov">          0 :     recptr = XLogInsert(RM_CLOG_ID, CLOG_TRUNCATE);</span>
+<span class="lineNum">     993 </span>                :<span class="lineNoCov">          0 :     XLogFlush(recptr);</span>
+<span class="lineNum">     994 </span>                :<span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     995 </span>                :            : 
+<span class="lineNum">     996 </span>                :            : /*
+<span class="lineNum">     997 </span>                :            :  * CLOG resource manager's routines
+<a name="998"><span class="lineNum">     998 </span>                :            :  */</a>
+<span class="lineNum">     999 </span>                :            : void
+<span class="lineNum">    1000 </span>                :<span class="lineNoCov">          0 : clog_redo(XLogReaderState *record)</span>
+<span class="lineNum">    1001 </span>                :            : {
+<span class="lineNum">    1002 </span>                :<span class="lineNoCov">          0 :     uint8       info = XLogRecGetInfo(record) &amp; ~XLR_INFO_MASK;</span>
+<span class="lineNum">    1003 </span>                :            : 
+<span class="lineNum">    1004 </span>                :            :     /* Backup blocks are not used in clog records */
+<span class="lineNum">    1005 </span>                :            :     Assert(!XLogRecHasAnyBlockRefs(record));
+<span class="lineNum">    1006 </span>                :            : 
+<span class="lineNum">    1007 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     if (info == CLOG_ZEROPAGE)</span>
+<span class="lineNum">    1008 </span>                :            :     {
+<span class="lineNum">    1009 </span>                :            :         int         pageno;
+<span class="lineNum">    1010 </span>                :            :         int         slotno;
+<span class="lineNum">    1011 </span>                :            : 
+<span class="lineNum">    1012 </span>                :<span class="lineNoCov">          0 :         memcpy(&amp;pageno, XLogRecGetData(record), sizeof(int));</span>
+<span class="lineNum">    1013 </span>                :            : 
+<span class="lineNum">    1014 </span>                :<span class="lineNoCov">          0 :         LWLockAcquire(CLogControlLock, LW_EXCLUSIVE);</span>
+<span class="lineNum">    1015 </span>                :            : 
+<span class="lineNum">    1016 </span>                :<span class="lineNoCov">          0 :         slotno = ZeroCLOGPage(pageno, false);</span>
+<span class="lineNum">    1017 </span>                :<span class="lineNoCov">          0 :         SimpleLruWritePage(ClogCtl, slotno);</span>
+<span class="lineNum">    1018 </span>                :            :         Assert(!ClogCtl-&gt;shared-&gt;page_dirty[slotno]);
+<span class="lineNum">    1019 </span>                :            : 
+<span class="lineNum">    1020 </span>                :<span class="lineNoCov">          0 :         LWLockRelease(CLogControlLock);</span>
+<span class="lineNum">    1021 </span>                :            :     }
+<span class="lineNum">    1022 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :     else if (info == CLOG_TRUNCATE)</span>
+<span class="lineNum">    1023 </span>                :            :     {
+<span class="lineNum">    1024 </span>                :            :         xl_clog_truncate xlrec;
+<span class="lineNum">    1025 </span>                :            : 
+<span class="lineNum">    1026 </span>                :<span class="lineNoCov">          0 :         memcpy(&amp;xlrec, XLogRecGetData(record), sizeof(xl_clog_truncate));</span>
+<span class="lineNum">    1027 </span>                :            : 
+<span class="lineNum">    1028 </span>                :            :         /*
+<span class="lineNum">    1029 </span>                :            :          * During XLOG replay, latest_page_number isn't set up yet; insert a
+<span class="lineNum">    1030 </span>                :            :          * suitable value to bypass the sanity test in SimpleLruTruncate.
+<span class="lineNum">    1031 </span>                :            :          */
+<span class="lineNum">    1032 </span>                :<span class="lineNoCov">          0 :         ClogCtl-&gt;shared-&gt;latest_page_number = xlrec.pageno;</span>
+<span class="lineNum">    1033 </span>                :            : 
+<span class="lineNum">    1034 </span>                :<span class="lineNoCov">          0 :         AdvanceOldestClogXid(xlrec.oldestXact);</span>
+<span class="lineNum">    1035 </span>                :            : 
+<span class="lineNum">    1036 </span>                :<span class="lineNoCov">          0 :         SimpleLruTruncate(ClogCtl, xlrec.pageno);</span>
+<span class="lineNum">    1037 </span>                :            :     }
+<span class="lineNum">    1038 </span>                :            :     else
+<span class="lineNum">    1039 </span>                :<span class="lineNoCov">          0 :         elog(PANIC, &quot;clog_redo: unknown op code %u&quot;, info);</span>
+<span class="lineNum">    1040 </span>                :<span class="lineNoCov">          0 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

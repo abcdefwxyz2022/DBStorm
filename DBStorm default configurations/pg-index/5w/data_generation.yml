@@ -1,0 +1,63 @@
+partitionAlgoConfig:
+  # use float number in [0,1]
+  probOfStatic: 1 # probability of Static Area
+  probOfDynamicExists: 0 # probability of Dynamic Area
+pkParamConfig:
+  step: # the step of pkId
+    begin: 5
+    end: 10
+    distributionType: UNIFORM
+fkParamConfig:
+  distMap:
+    UNIFORM: 0 # probability of using uniform distribution
+    NORMAL: 100 # probability of using normal distribution
+attrParamConfig:
+  distMap:
+    UNIFORM: 0 # probability of using uniform distribution
+    NORMAL: 100 # probability of using normal distribution
+dataRepoConfig:
+  #>>>>>>>>>>>>> VARCHAR <<<<<<<<<<<<<<#
+  # times of generating data
+  numOfVarchar: 1000
+  # length of each varchar
+  lenOfVarchar:
+    begin: 140
+    end: 141
+    distributionType: UNIFORM
+  # chars contain in varchar
+  charsOfVarchar: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123456"
+
+  #>>>>>>>>>>>>> INTEGER <<<<<<<<<<<<<<#
+  numOfInteger: 1000
+  seedOfInteger: # seed used to generate data
+    begin: 0
+    end: 100000
+    distributionType: UNIFORM
+
+  #>>>>>>>>>>>>> DOUBLE <<<<<<<<<<<<<<#
+  numOfDouble: 1000
+  seedOfDouble: # seed used to generate data
+    begin: 0
+    end: 100000
+    distributionType: UNIFORM
+
+  #>>>>>>>>>>>>> DECIMAL <<<<<<<<<<<<<<#
+  numOfDecimal: 1000
+  seedOfDecimal: # seed used to generate data
+    begin: 0
+    end: 100000
+    distributionType: UNIFORM
+
+  #>>>>>>>>>>>>> TIMESTAMP <<<<<<<<<<<<<<#
+  numOfTimestamp: 1000
+  seedOfTimestamp: # seed used to generate data
+    begin: 0
+    end: 1000000000
+    distributionType: UNIFORM
+
+  #>>>>>>>>>>>>> BLOB <<<<<<<<<<<<<<#
+  numOfBlob: 100
+  lenOfBlob: #  length 
+    begin: 10
+    end: 30
+    distributionType: UNIFORM

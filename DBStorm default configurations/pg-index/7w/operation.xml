@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<transaction_template>
+    <operation_number>
+        <!-- number of operations in a txn -->
+        <seed>
+            <begin>28</begin>
+            <end>30</end>
+            <distribution>Uniform</distribution>
+        </seed>
+    </operation_number>
+
+    <transaction_or_operation>
+        <!--
+            0: generated txn templates in transaction granularity
+            1: generated txn templates in operation granularity
+        -->
+        <type>0,1</type>
+        <probability>0,100</probability>
+    </transaction_or_operation>
+
+
+    <operation_type>
+        <!-- type of operation
+         0:insert 1:delete 2:update 3:select 4:config 5:lock table 6:alter index
+		 -->
+        <!-- the sum of probability must be 100  -->
+        <type>0,1,2,3,4,6</type>
+        <probability>20,20,20,10,10,20</probability>
+    </operation_type>
+
+    <start>
+        <read_only>
+            <!-- the txn is read only? 0:no 1:yes -->
+            <type>0,1</type>
+            <probability>90,10</probability>
+        </read_only>
+
+        <snapshot>
+            <!-- start with consistent snapshot? 0:no 1:yes -->
+            <type>0,1</type>
+            <probability>50,50</probability>
+        </snapshot>
+        <use_txn_snapshot>
+            <!-- use txn snapshot? 0:no 1:yes -->
+            <type>0,1</type>
+            <probability>0,100</probability>
+        </use_txn_snapshot>   
+        <deferrable>
+            <!-- the txn is deferrable while read only? 0:no 1:yes -->
+            <type>0,1</type>
+            <probability>90,10</probability>
+        </deferrable> 
+<use_2PC>
+            <!-- 2PC? 0:no 1:yes -->
+            <type>0,1</type>
+            <probability>50,50</probability>
+        </use_2PC>
+</start>
+
+
+    
+    <table_index>
+        <seed>
+        </seed>
+    </table_index>
+
+    <select>
+        
+        <from_clause>
+            <from_clause_type>
+                <type>0,1,2</type>
+                <probability>0,0,100</probability>
+            </from_clause_type>
+            <seed>
+            </seed>
+        </from_clause>
+        <project_read>
+            <attribute_group>
+                
+                <seed>
+                </seed>
+            </attribute_group>
+            
+            <!-- 0:take some attribute(s) for project 1:take all non-key attributes 2:take all non-pk attributes
+note: pk will always be projected. -->
+            <attribute_number_type>
+                <type>0,1,2</type>
+                <probability>50,0,50</probability>
+            </attribute_number_type>
+            <!-- the number of attributes projected, while choosing some attributes for project -->
+            <attribute_number>
+                <seed>
+                    <begin>0</begin>
+                    <end>1</end>
+                    <distribution>Uniform</distribution>
+                </seed>
+            </attribute_number>
+        </project_read>
+        <where_clause>
+            <attribute_type>
+                <!-- type of attributes where clause chose，0:pk 1:fk 2:non-key attr 3:none -->
+                <!-- the sum of probability must be 100  -->
+                <type>0,1,2,3</type>
+                <probability>25,25,25,25</probability>
+            </attribute_type>
+            <attribute_group>
+                
+                <seed>
+                </seed>
+            </attribute_group>
+            <connect>
+                <!-- 0:and 1:or, valid only when set ./predicate/transact_type with 2, i.e. completely random-->
+                <type>0,1</type>
+                <probability>50,50</probability>            
+</connect>
+            <predicate>
+                <!-- array length of condition IN -->
+                <in_num>
+                    <seed>
+                        <begin>1</begin>
+                        <end>6</end>
+                        <distribution>Uniform</distribution>
+                    </seed>
+                </in_num>
+                <!-- type of predicate condition 0:point 1:range 2:completely random-->
+                <transact_type>
+                    <!-- the sum of probability must be 100  -->
+                    <type>0,1,2</type>
+                    <probability>0,0,100</probability>
+                </transact_type>
+                <!-- type of predicate condition when set transact_type with 2
+0: EQUAL, 1: GREATER, 2: LESS, 3: GREATEREQUAL, 4: LESSEQUAL, 5: NOTEQUAL, 6: LIKE,  7: IN,  8: BETWEEN, 9: ISNULL-->
+                <operator>
+                    <!-- the sum of probability must be 100  -->
+                    <type>0,1,2,3,4,5,6,7,8,9</type>
+                    <probability>10,10,10,10,10,10,10,10,10,10</probability>
+                </operator>
+                <!-- 1: negate the condition -->
+                <if_not>
+                    <type>0,1</type>
+                    <probability>50,50</probability>
+                </if_not>
+            </predicate>
+        </where_clause>
+		        <!-- 0:for update 1:lock in share mode 2:FOR_KEY_SHARE 3:FOR_NO_KEY_UPDATE 4: no lock-->
+        <lock_mode>
+            <!-- the sum of probability must be 100  -->
+            <type>0,1,2,3</type>
+            <probability>25,25,25,25</probability>
+        </lock_mode>
+
+
+        <sort_key>
+            <!-- 0:sort -->
+            <if_sort>
+                <type>0,1</type>
+                <probability>50,50</probability>
+            </if_sort>
+            
+            <seed>
+            </seed>
+        </sort_key>
+    </select>
+
+    <update>
+        <from_clause>
+            
+            <seed>
+            </seed>
+        </from_clause>
+        <project_write>
+            
+            <attribute_group>
+                <seed>
+                </seed>
+            </attribute_group>
+            <!-- 0:take some attribute(s) for project 1:take all non-key attributes 2:take all non-pk attributes
+note: pk will always be projected. -->
+            <attribute_number_type>
+                <type>0,1,2</type>
+                <probability>0,0,100</probability>
+            </attribute_number_type>
+            <!-- the number of attributes projected, while choosing some attributes for project -->
+            <attribute_number>
+                <seed>
+                    <begin>1</begin>
+                    <end>3</end>
+                    <distribution>Uniform</distribution>
+                </seed>
+            </attribute_number>
+        </project_write>
+        <where_clause>
+            <predicate>
+                <!-- 1: negate the condition -->
+                <if_not>
+                    <type>0,1</type>
+                    <probability>100,0</probability>
+                </if_not>
+            </predicate>
+        </where_clause>
+    </update>
+
+    <delete>
+        
+        <from_clause>
+            <seed>
+            </seed>
+        </from_clause>
+        <where_clause>
+            <predicate>
+                <if_not>
+                    <!-- 1: negate the condition -->
+                    <type>0,1</type>
+                    <probability>100,0</probability>
+                </if_not>
+            </predicate>
+        </where_clause>
+    </delete>
+
+    <insert>
+        <from_clause>
+            
+            <seed>
+            </seed>
+        </from_clause>
+        <project_write>
+        </project_write>
+        <where_clause>
+        </where_clause>
+    </insert>
+
+</transaction_template>

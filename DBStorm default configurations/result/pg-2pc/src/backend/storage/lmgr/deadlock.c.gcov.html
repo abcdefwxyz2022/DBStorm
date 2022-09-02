@@ -1,0 +1,1269 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - PostgreSQL 12.7 - src/backend/storage/lmgr/deadlock.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">src/backend/storage/lmgr</a> - deadlock.c<span style="font-size: 80%;"> (source / <a href="deadlock.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">PostgreSQL 12.7</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">275</td>
+            <td class="headerCovTableEntry">303</td>
+            <td class="headerCovTableEntryHi">90.8 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2021-08-27 13:33:55</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">11</td>
+            <td class="headerCovTableEntry">12</td>
+            <td class="headerCovTableEntryHi">91.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+            | Branches:
+            <span class="coverLegendCov">+</span> taken
+            <span class="coverLegendNoCov">-</span> not taken
+            <span class="coverLegendNoCov">#</span> not executed
+</td>
+            <td></td>
+            <td class="headerItem">Branches:</td>
+            <td class="headerCovTableEntry">166</td>
+            <td class="headerCovTableEntry">214</td>
+            <td class="headerCovTableEntryMed">77.6 %</td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">           Branch data     Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>                :            : /*-------------------------------------------------------------------------</a>
+<span class="lineNum">       2 </span>                :            :  *
+<span class="lineNum">       3 </span>                :            :  * deadlock.c
+<span class="lineNum">       4 </span>                :            :  *    POSTGRES deadlock detection code
+<span class="lineNum">       5 </span>                :            :  *
+<span class="lineNum">       6 </span>                :            :  * See src/backend/storage/lmgr/README for a description of the deadlock
+<span class="lineNum">       7 </span>                :            :  * detection and resolution algorithms.
+<span class="lineNum">       8 </span>                :            :  *
+<span class="lineNum">       9 </span>                :            :  *
+<span class="lineNum">      10 </span>                :            :  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+<span class="lineNum">      11 </span>                :            :  * Portions Copyright (c) 1994, Regents of the University of California
+<span class="lineNum">      12 </span>                :            :  *
+<span class="lineNum">      13 </span>                :            :  *
+<span class="lineNum">      14 </span>                :            :  * IDENTIFICATION
+<span class="lineNum">      15 </span>                :            :  *    src/backend/storage/lmgr/deadlock.c
+<span class="lineNum">      16 </span>                :            :  *
+<span class="lineNum">      17 </span>                :            :  *  Interface:
+<span class="lineNum">      18 </span>                :            :  *
+<span class="lineNum">      19 </span>                :            :  *  DeadLockCheck()
+<span class="lineNum">      20 </span>                :            :  *  DeadLockReport()
+<span class="lineNum">      21 </span>                :            :  *  RememberSimpleDeadLock()
+<span class="lineNum">      22 </span>                :            :  *  InitDeadLockChecking()
+<span class="lineNum">      23 </span>                :            :  *
+<span class="lineNum">      24 </span>                :            :  *-------------------------------------------------------------------------
+<span class="lineNum">      25 </span>                :            :  */
+<span class="lineNum">      26 </span>                :            : #include &quot;postgres.h&quot;
+<span class="lineNum">      27 </span>                :            : 
+<span class="lineNum">      28 </span>                :            : #include &quot;miscadmin.h&quot;
+<span class="lineNum">      29 </span>                :            : #include &quot;pg_trace.h&quot;
+<span class="lineNum">      30 </span>                :            : #include &quot;pgstat.h&quot;
+<span class="lineNum">      31 </span>                :            : #include &quot;storage/lmgr.h&quot;
+<span class="lineNum">      32 </span>                :            : #include &quot;storage/proc.h&quot;
+<span class="lineNum">      33 </span>                :            : #include &quot;utils/memutils.h&quot;
+<span class="lineNum">      34 </span>                :            : 
+<span class="lineNum">      35 </span>                :            : 
+<span class="lineNum">      36 </span>                :            : /*
+<span class="lineNum">      37 </span>                :            :  * One edge in the waits-for graph.
+<span class="lineNum">      38 </span>                :            :  *
+<span class="lineNum">      39 </span>                :            :  * waiter and blocker may or may not be members of a lock group, but if either
+<span class="lineNum">      40 </span>                :            :  * is, it will be the leader rather than any other member of the lock group.
+<span class="lineNum">      41 </span>                :            :  * The group leaders act as representatives of the whole group even though
+<span class="lineNum">      42 </span>                :            :  * those particular processes need not be waiting at all.  There will be at
+<span class="lineNum">      43 </span>                :            :  * least one member of the waiter's lock group on the wait queue for the given
+<span class="lineNum">      44 </span>                :            :  * lock, maybe more.
+<span class="lineNum">      45 </span>                :            :  */
+<span class="lineNum">      46 </span>                :            : typedef struct
+<span class="lineNum">      47 </span>                :            : {
+<span class="lineNum">      48 </span>                :            :     PGPROC     *waiter;         /* the leader of the waiting lock group */
+<span class="lineNum">      49 </span>                :            :     PGPROC     *blocker;        /* the leader of the group it is waiting for */
+<span class="lineNum">      50 </span>                :            :     LOCK       *lock;           /* the lock being waited for */
+<span class="lineNum">      51 </span>                :            :     int         pred;           /* workspace for TopoSort */
+<span class="lineNum">      52 </span>                :            :     int         link;           /* workspace for TopoSort */
+<span class="lineNum">      53 </span>                :            : } EDGE;
+<span class="lineNum">      54 </span>                :            : 
+<span class="lineNum">      55 </span>                :            : /* One potential reordering of a lock's wait queue */
+<span class="lineNum">      56 </span>                :            : typedef struct
+<span class="lineNum">      57 </span>                :            : {
+<span class="lineNum">      58 </span>                :            :     LOCK       *lock;           /* the lock whose wait queue is described */
+<span class="lineNum">      59 </span>                :            :     PGPROC    **procs;          /* array of PGPROC *'s in new wait order */
+<span class="lineNum">      60 </span>                :            :     int         nProcs;
+<span class="lineNum">      61 </span>                :            : } WAIT_ORDER;
+<span class="lineNum">      62 </span>                :            : 
+<span class="lineNum">      63 </span>                :            : /*
+<span class="lineNum">      64 </span>                :            :  * Information saved about each edge in a detected deadlock cycle.  This
+<span class="lineNum">      65 </span>                :            :  * is used to print a diagnostic message upon failure.
+<span class="lineNum">      66 </span>                :            :  *
+<span class="lineNum">      67 </span>                :            :  * Note: because we want to examine this info after releasing the lock
+<span class="lineNum">      68 </span>                :            :  * manager's partition locks, we can't just store LOCK and PGPROC pointers;
+<span class="lineNum">      69 </span>                :            :  * we must extract out all the info we want to be able to print.
+<span class="lineNum">      70 </span>                :            :  */
+<span class="lineNum">      71 </span>                :            : typedef struct
+<span class="lineNum">      72 </span>                :            : {
+<span class="lineNum">      73 </span>                :            :     LOCKTAG     locktag;        /* ID of awaited lock object */
+<span class="lineNum">      74 </span>                :            :     LOCKMODE    lockmode;       /* type of lock we're waiting for */
+<span class="lineNum">      75 </span>                :            :     int         pid;            /* PID of blocked backend */
+<span class="lineNum">      76 </span>                :            : } DEADLOCK_INFO;
+<span class="lineNum">      77 </span>                :            : 
+<span class="lineNum">      78 </span>                :            : 
+<span class="lineNum">      79 </span>                :            : static bool DeadLockCheckRecurse(PGPROC *proc);
+<span class="lineNum">      80 </span>                :            : static int  TestConfiguration(PGPROC *startProc);
+<span class="lineNum">      81 </span>                :            : static bool FindLockCycle(PGPROC *checkProc,
+<span class="lineNum">      82 </span>                :            :                           EDGE *softEdges, int *nSoftEdges);
+<span class="lineNum">      83 </span>                :            : static bool FindLockCycleRecurse(PGPROC *checkProc, int depth,
+<span class="lineNum">      84 </span>                :            :                                  EDGE *softEdges, int *nSoftEdges);
+<span class="lineNum">      85 </span>                :            : static bool FindLockCycleRecurseMember(PGPROC *checkProc,
+<span class="lineNum">      86 </span>                :            :                                        PGPROC *checkProcLeader,
+<span class="lineNum">      87 </span>                :            :                                        int depth, EDGE *softEdges, int *nSoftEdges);
+<span class="lineNum">      88 </span>                :            : static bool ExpandConstraints(EDGE *constraints, int nConstraints);
+<span class="lineNum">      89 </span>                :            : static bool TopoSort(LOCK *lock, EDGE *constraints, int nConstraints,
+<span class="lineNum">      90 </span>                :            :                      PGPROC **ordering);
+<span class="lineNum">      91 </span>                :            : 
+<span class="lineNum">      92 </span>                :            : #ifdef DEBUG_DEADLOCK
+<span class="lineNum">      93 </span>                :            : static void PrintLockQueue(LOCK *lock, const char *info);
+<span class="lineNum">      94 </span>                :            : #endif
+<span class="lineNum">      95 </span>                :            : 
+<span class="lineNum">      96 </span>                :            : 
+<span class="lineNum">      97 </span>                :            : /*
+<span class="lineNum">      98 </span>                :            :  * Working space for the deadlock detector
+<span class="lineNum">      99 </span>                :            :  */
+<span class="lineNum">     100 </span>                :            : 
+<span class="lineNum">     101 </span>                :            : /* Workspace for FindLockCycle */
+<span class="lineNum">     102 </span>                :            : static PGPROC **visitedProcs;   /* Array of visited procs */
+<span class="lineNum">     103 </span>                :            : static int  nVisitedProcs;
+<span class="lineNum">     104 </span>                :            : 
+<span class="lineNum">     105 </span>                :            : /* Workspace for TopoSort */
+<span class="lineNum">     106 </span>                :            : static PGPROC **topoProcs;      /* Array of not-yet-output procs */
+<span class="lineNum">     107 </span>                :            : static int *beforeConstraints;  /* Counts of remaining before-constraints */
+<span class="lineNum">     108 </span>                :            : static int *afterConstraints;   /* List head for after-constraints */
+<span class="lineNum">     109 </span>                :            : 
+<span class="lineNum">     110 </span>                :            : /* Output area for ExpandConstraints */
+<span class="lineNum">     111 </span>                :            : static WAIT_ORDER *waitOrders;  /* Array of proposed queue rearrangements */
+<span class="lineNum">     112 </span>                :            : static int  nWaitOrders;
+<span class="lineNum">     113 </span>                :            : static PGPROC **waitOrderProcs; /* Space for waitOrders queue contents */
+<span class="lineNum">     114 </span>                :            : 
+<span class="lineNum">     115 </span>                :            : /* Current list of constraints being considered */
+<span class="lineNum">     116 </span>                :            : static EDGE *curConstraints;
+<span class="lineNum">     117 </span>                :            : static int  nCurConstraints;
+<span class="lineNum">     118 </span>                :            : static int  maxCurConstraints;
+<span class="lineNum">     119 </span>                :            : 
+<span class="lineNum">     120 </span>                :            : /* Storage space for results from FindLockCycle */
+<span class="lineNum">     121 </span>                :            : static EDGE *possibleConstraints;
+<span class="lineNum">     122 </span>                :            : static int  nPossibleConstraints;
+<span class="lineNum">     123 </span>                :            : static int  maxPossibleConstraints;
+<span class="lineNum">     124 </span>                :            : static DEADLOCK_INFO *deadlockDetails;
+<span class="lineNum">     125 </span>                :            : static int  nDeadlockDetails;
+<span class="lineNum">     126 </span>                :            : 
+<span class="lineNum">     127 </span>                :            : /* PGPROC pointer of any blocking autovacuum worker found */
+<span class="lineNum">     128 </span>                :            : static PGPROC *blocking_autovacuum_proc = NULL;
+<span class="lineNum">     129 </span>                :            : 
+<span class="lineNum">     130 </span>                :            : 
+<span class="lineNum">     131 </span>                :            : /*
+<span class="lineNum">     132 </span>                :            :  * InitDeadLockChecking -- initialize deadlock checker during backend startup
+<span class="lineNum">     133 </span>                :            :  *
+<span class="lineNum">     134 </span>                :            :  * This does per-backend initialization of the deadlock checker; primarily,
+<span class="lineNum">     135 </span>                :            :  * allocation of working memory for DeadLockCheck.  We do this per-backend
+<span class="lineNum">     136 </span>                :            :  * since there's no percentage in making the kernel do copy-on-write
+<span class="lineNum">     137 </span>                :            :  * inheritance of workspace from the postmaster.  We want to allocate the
+<span class="lineNum">     138 </span>                :            :  * space at startup because (a) the deadlock checker might be invoked when
+<span class="lineNum">     139 </span>                :            :  * there's no free memory left, and (b) the checker is normally run inside a
+<span class="lineNum">     140 </span>                :            :  * signal handler, which is a very dangerous place to invoke palloc from.
+<a name="141"><span class="lineNum">     141 </span>                :            :  */</a>
+<span class="lineNum">     142 </span>                :            : void
+<span class="lineNum">     143 </span>                :<span class="lineCov">       1763 : InitDeadLockChecking(void)</span>
+<span class="lineNum">     144 </span>                :            : {
+<span class="lineNum">     145 </span>                :            :     MemoryContext oldcxt;
+<span class="lineNum">     146 </span>                :            : 
+<span class="lineNum">     147 </span>                :            :     /* Make sure allocations are permanent */
+<span class="lineNum">     148 </span>                :<span class="lineCov">       1763 :     oldcxt = MemoryContextSwitchTo(TopMemoryContext);</span>
+<span class="lineNum">     149 </span>                :            : 
+<span class="lineNum">     150 </span>                :            :     /*
+<span class="lineNum">     151 </span>                :            :      * FindLockCycle needs at most MaxBackends entries in visitedProcs[] and
+<span class="lineNum">     152 </span>                :            :      * deadlockDetails[].
+<span class="lineNum">     153 </span>                :            :      */
+<span class="lineNum">     154 </span>                :<span class="lineCov">       1763 :     visitedProcs = (PGPROC **) palloc(MaxBackends * sizeof(PGPROC *));</span>
+<span class="lineNum">     155 </span>                :<span class="lineCov">       1763 :     deadlockDetails = (DEADLOCK_INFO *) palloc(MaxBackends * sizeof(DEADLOCK_INFO));</span>
+<span class="lineNum">     156 </span>                :            : 
+<span class="lineNum">     157 </span>                :            :     /*
+<span class="lineNum">     158 </span>                :            :      * TopoSort needs to consider at most MaxBackends wait-queue entries, and
+<span class="lineNum">     159 </span>                :            :      * it needn't run concurrently with FindLockCycle.
+<span class="lineNum">     160 </span>                :            :      */
+<span class="lineNum">     161 </span>                :<span class="lineCov">       1763 :     topoProcs = visitedProcs;   /* re-use this space */</span>
+<span class="lineNum">     162 </span>                :<span class="lineCov">       1763 :     beforeConstraints = (int *) palloc(MaxBackends * sizeof(int));</span>
+<span class="lineNum">     163 </span>                :<span class="lineCov">       1763 :     afterConstraints = (int *) palloc(MaxBackends * sizeof(int));</span>
+<span class="lineNum">     164 </span>                :            : 
+<span class="lineNum">     165 </span>                :            :     /*
+<span class="lineNum">     166 </span>                :            :      * We need to consider rearranging at most MaxBackends/2 wait queues
+<span class="lineNum">     167 </span>                :            :      * (since it takes at least two waiters in a queue to create a soft edge),
+<span class="lineNum">     168 </span>                :            :      * and the expanded form of the wait queues can't involve more than
+<span class="lineNum">     169 </span>                :            :      * MaxBackends total waiters.
+<span class="lineNum">     170 </span>                :            :      */
+<span class="lineNum">     171 </span>                :<span class="lineCov">       1763 :     waitOrders = (WAIT_ORDER *)</span>
+<span class="lineNum">     172 </span>                :<span class="lineCov">       1763 :         palloc((MaxBackends / 2) * sizeof(WAIT_ORDER));</span>
+<span class="lineNum">     173 </span>                :<span class="lineCov">       1763 :     waitOrderProcs = (PGPROC **) palloc(MaxBackends * sizeof(PGPROC *));</span>
+<span class="lineNum">     174 </span>                :            : 
+<span class="lineNum">     175 </span>                :            :     /*
+<span class="lineNum">     176 </span>                :            :      * Allow at most MaxBackends distinct constraints in a configuration. (Is
+<span class="lineNum">     177 </span>                :            :      * this enough?  In practice it seems it should be, but I don't quite see
+<span class="lineNum">     178 </span>                :            :      * how to prove it.  If we run out, we might fail to find a workable wait
+<span class="lineNum">     179 </span>                :            :      * queue rearrangement even though one exists.)  NOTE that this number
+<span class="lineNum">     180 </span>                :            :      * limits the maximum recursion depth of DeadLockCheckRecurse. Making it
+<span class="lineNum">     181 </span>                :            :      * really big might potentially allow a stack-overflow problem.
+<span class="lineNum">     182 </span>                :            :      */
+<span class="lineNum">     183 </span>                :<span class="lineCov">       1763 :     maxCurConstraints = MaxBackends;</span>
+<span class="lineNum">     184 </span>                :<span class="lineCov">       1763 :     curConstraints = (EDGE *) palloc(maxCurConstraints * sizeof(EDGE));</span>
+<span class="lineNum">     185 </span>                :            : 
+<span class="lineNum">     186 </span>                :            :     /*
+<span class="lineNum">     187 </span>                :            :      * Allow up to 3*MaxBackends constraints to be saved without having to
+<span class="lineNum">     188 </span>                :            :      * re-run TestConfiguration.  (This is probably more than enough, but we
+<span class="lineNum">     189 </span>                :            :      * can survive if we run low on space by doing excess runs of
+<span class="lineNum">     190 </span>                :            :      * TestConfiguration to re-compute constraint lists each time needed.) The
+<span class="lineNum">     191 </span>                :            :      * last MaxBackends entries in possibleConstraints[] are reserved as
+<span class="lineNum">     192 </span>                :            :      * output workspace for FindLockCycle.
+<span class="lineNum">     193 </span>                :            :      */
+<span class="lineNum">     194 </span>                :<span class="lineCov">       1763 :     maxPossibleConstraints = MaxBackends * 4;</span>
+<span class="lineNum">     195 </span>                :<span class="lineCov">       1763 :     possibleConstraints =</span>
+<span class="lineNum">     196 </span>                :<span class="lineCov">       1763 :         (EDGE *) palloc(maxPossibleConstraints * sizeof(EDGE));</span>
+<span class="lineNum">     197 </span>                :            : 
+<span class="lineNum">     198 </span>                :<span class="lineCov">       1763 :     MemoryContextSwitchTo(oldcxt);</span>
+<span class="lineNum">     199 </span>                :<span class="lineCov">       1763 : }</span>
+<span class="lineNum">     200 </span>                :            : 
+<span class="lineNum">     201 </span>                :            : /*
+<span class="lineNum">     202 </span>                :            :  * DeadLockCheck -- Checks for deadlocks for a given process
+<span class="lineNum">     203 </span>                :            :  *
+<span class="lineNum">     204 </span>                :            :  * This code looks for deadlocks involving the given process.  If any
+<span class="lineNum">     205 </span>                :            :  * are found, it tries to rearrange lock wait queues to resolve the
+<span class="lineNum">     206 </span>                :            :  * deadlock.  If resolution is impossible, return DS_HARD_DEADLOCK ---
+<span class="lineNum">     207 </span>                :            :  * the caller is then expected to abort the given proc's transaction.
+<span class="lineNum">     208 </span>                :            :  *
+<span class="lineNum">     209 </span>                :            :  * Caller must already have locked all partitions of the lock tables.
+<span class="lineNum">     210 </span>                :            :  *
+<span class="lineNum">     211 </span>                :            :  * On failure, deadlock details are recorded in deadlockDetails[] for
+<span class="lineNum">     212 </span>                :            :  * subsequent printing by DeadLockReport().  That activity is separate
+<span class="lineNum">     213 </span>                :            :  * because (a) we don't want to do it while holding all those LWLocks,
+<span class="lineNum">     214 </span>                :            :  * and (b) we are typically invoked inside a signal handler.
+<a name="215"><span class="lineNum">     215 </span>                :            :  */</a>
+<span class="lineNum">     216 </span>                :            : DeadLockState
+<span class="lineNum">     217 </span>                :<span class="lineCov">      36511 : DeadLockCheck(PGPROC *proc)</span>
+<span class="lineNum">     218 </span>                :            : {
+<span class="lineNum">     219 </span>                :            :     int         i,
+<span class="lineNum">     220 </span>                :            :                 j;
+<span class="lineNum">     221 </span>                :            : 
+<span class="lineNum">     222 </span>                :            :     /* Initialize to &quot;no constraints&quot; */
+<span class="lineNum">     223 </span>                :<span class="lineCov">      36511 :     nCurConstraints = 0;</span>
+<span class="lineNum">     224 </span>                :<span class="lineCov">      36511 :     nPossibleConstraints = 0;</span>
+<span class="lineNum">     225 </span>                :<span class="lineCov">      36511 :     nWaitOrders = 0;</span>
+<span class="lineNum">     226 </span>                :            : 
+<span class="lineNum">     227 </span>                :            :     /* Initialize to not blocked by an autovacuum worker */
+<span class="lineNum">     228 </span>                :<span class="lineCov">      36511 :     blocking_autovacuum_proc = NULL;</span>
+<span class="lineNum">     229 </span>                :            : 
+<span class="lineNum">     230 </span>                :            :     /* Search for deadlocks and possible fixes */
+<span class="lineNum">     231 </span>        [<span class="branchCov" title="Branch 1 was taken 6346 times"> + </span><span class="branchCov" title="Branch 2 was taken 30165 times"> + </span>]:<span class="lineCov">      36511 :     if (DeadLockCheckRecurse(proc))</span>
+<span class="lineNum">     232 </span>                :            :     {
+<span class="lineNum">     233 </span>                :            :         /*
+<span class="lineNum">     234 </span>                :            :          * Call FindLockCycle one more time, to record the correct
+<span class="lineNum">     235 </span>                :            :          * deadlockDetails[] for the basic state with no rearrangements.
+<span class="lineNum">     236 </span>                :            :          */
+<span class="lineNum">     237 </span>                :            :         int         nSoftEdges;
+<span class="lineNum">     238 </span>                :            : 
+<span class="lineNum">     239 </span>                :<span class="lineCov">       6346 :         TRACE_POSTGRESQL_DEADLOCK_FOUND();</span>
+<span class="lineNum">     240 </span>                :            : 
+<span class="lineNum">     241 </span>                :<span class="lineCov">       6346 :         nWaitOrders = 0;</span>
+<span class="lineNum">     242 </span>        [<span class="branchNoCov" title="Branch 1 was not taken"> - </span><span class="branchCov" title="Branch 2 was taken 6346 times"> + </span>]:<span class="lineCov">       6346 :         if (!FindLockCycle(proc, possibleConstraints, &amp;nSoftEdges))</span>
+<span class="lineNum">     243 </span>                :<span class="lineNoCov">          0 :             elog(FATAL, &quot;deadlock seems to have disappeared&quot;);</span>
+<span class="lineNum">     244 </span>                :            : 
+<span class="lineNum">     245 </span>                :<span class="lineCov">       6346 :         return DS_HARD_DEADLOCK;    /* cannot find a non-deadlocked state */</span>
+<span class="lineNum">     246 </span>                :            :     }
+<span class="lineNum">     247 </span>                :            : 
+<span class="lineNum">     248 </span>                :            :     /* Apply any needed rearrangements of wait queues */
+<span class="lineNum">     249 </span>        [<span class="branchCov" title="Branch 0 was taken 2932 times"> + </span><span class="branchCov" title="Branch 1 was taken 30165 times"> + </span>]:<span class="lineCov">      33097 :     for (i = 0; i &lt; nWaitOrders; i++)</span>
+<span class="lineNum">     250 </span>                :            :     {
+<span class="lineNum">     251 </span>                :<span class="lineCov">       2932 :         LOCK       *lock = waitOrders[i].lock;</span>
+<span class="lineNum">     252 </span>                :<span class="lineCov">       2932 :         PGPROC    **procs = waitOrders[i].procs;</span>
+<span class="lineNum">     253 </span>                :<span class="lineCov">       2932 :         int         nProcs = waitOrders[i].nProcs;</span>
+<span class="lineNum">     254 </span>                :<span class="lineCov">       2932 :         PROC_QUEUE *waitQueue = &amp;(lock-&gt;waitProcs);</span>
+<span class="lineNum">     255 </span>                :            : 
+<span class="lineNum">     256 </span>                :            :         Assert(nProcs == waitQueue-&gt;size);
+<span class="lineNum">     257 </span>                :            : 
+<span class="lineNum">     258 </span>                :            : #ifdef DEBUG_DEADLOCK
+<span class="lineNum">     259 </span>                :            :         PrintLockQueue(lock, &quot;DeadLockCheck:&quot;);
+<span class="lineNum">     260 </span>                :            : #endif
+<span class="lineNum">     261 </span>                :            : 
+<span class="lineNum">     262 </span>                :            :         /* Reset the queue and re-add procs in the desired order */
+<span class="lineNum">     263 </span>                :<span class="lineCov">       2932 :         ProcQueueInit(waitQueue);</span>
+<span class="lineNum">     264 </span>        [<span class="branchCov" title="Branch 0 was taken 36242 times"> + </span><span class="branchCov" title="Branch 1 was taken 2932 times"> + </span>]:<span class="lineCov">      39174 :         for (j = 0; j &lt; nProcs; j++)</span>
+<span class="lineNum">     265 </span>                :            :         {
+<span class="lineNum">     266 </span>                :<span class="lineCov">      36242 :             SHMQueueInsertBefore(&amp;(waitQueue-&gt;links), &amp;(procs[j]-&gt;links));</span>
+<span class="lineNum">     267 </span>                :<span class="lineCov">      36242 :             waitQueue-&gt;size++;</span>
+<span class="lineNum">     268 </span>                :            :         }
+<span class="lineNum">     269 </span>                :            : 
+<span class="lineNum">     270 </span>                :            : #ifdef DEBUG_DEADLOCK
+<span class="lineNum">     271 </span>                :            :         PrintLockQueue(lock, &quot;rearranged to:&quot;);
+<span class="lineNum">     272 </span>                :            : #endif
+<span class="lineNum">     273 </span>                :            : 
+<span class="lineNum">     274 </span>                :            :         /* See if any waiters for the lock can be woken up now */
+<span class="lineNum">     275 </span>                :<span class="lineCov">       2932 :         ProcLockWakeup(GetLocksMethodTable(lock), lock);</span>
+<span class="lineNum">     276 </span>                :            :     }
+<span class="lineNum">     277 </span>                :            : 
+<span class="lineNum">     278 </span>                :            :     /* Return code tells caller if we had to escape a deadlock or not */
+<span class="lineNum">     279 </span>        [<span class="branchCov" title="Branch 0 was taken 2521 times"> + </span><span class="branchCov" title="Branch 1 was taken 27644 times"> + </span>]:<span class="lineCov">      30165 :     if (nWaitOrders &gt; 0)</span>
+<span class="lineNum">     280 </span>                :<span class="lineCov">       2521 :         return DS_SOFT_DEADLOCK;</span>
+<span class="lineNum">     281 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 27644 times"> + </span>]:<span class="lineCov">      27644 :     else if (blocking_autovacuum_proc != NULL)</span>
+<span class="lineNum">     282 </span>                :<span class="lineNoCov">          0 :         return DS_BLOCKED_BY_AUTOVACUUM;</span>
+<span class="lineNum">     283 </span>                :            :     else
+<span class="lineNum">     284 </span>                :<span class="lineCov">      27644 :         return DS_NO_DEADLOCK;</span>
+<span class="lineNum">     285 </span>                :            : }
+<span class="lineNum">     286 </span>                :            : 
+<span class="lineNum">     287 </span>                :            : /*
+<span class="lineNum">     288 </span>                :            :  * Return the PGPROC of the autovacuum that's blocking a process.
+<span class="lineNum">     289 </span>                :            :  *
+<span class="lineNum">     290 </span>                :            :  * We reset the saved pointer as soon as we pass it back.
+<a name="291"><span class="lineNum">     291 </span>                :            :  */</a>
+<span class="lineNum">     292 </span>                :            : PGPROC *
+<span class="lineNum">     293 </span>                :<span class="lineNoCov">          0 : GetBlockingAutoVacuumPgproc(void)</span>
+<span class="lineNum">     294 </span>                :            : {
+<span class="lineNum">     295 </span>                :            :     PGPROC     *ptr;
+<span class="lineNum">     296 </span>                :            : 
+<span class="lineNum">     297 </span>                :<span class="lineNoCov">          0 :     ptr = blocking_autovacuum_proc;</span>
+<span class="lineNum">     298 </span>                :<span class="lineNoCov">          0 :     blocking_autovacuum_proc = NULL;</span>
+<span class="lineNum">     299 </span>                :            : 
+<span class="lineNum">     300 </span>                :<span class="lineNoCov">          0 :     return ptr;</span>
+<span class="lineNum">     301 </span>                :            : }
+<span class="lineNum">     302 </span>                :            : 
+<span class="lineNum">     303 </span>                :            : /*
+<span class="lineNum">     304 </span>                :            :  * DeadLockCheckRecurse -- recursively search for valid orderings
+<span class="lineNum">     305 </span>                :            :  *
+<span class="lineNum">     306 </span>                :            :  * curConstraints[] holds the current set of constraints being considered
+<span class="lineNum">     307 </span>                :            :  * by an outer level of recursion.  Add to this each possible solution
+<span class="lineNum">     308 </span>                :            :  * constraint for any cycle detected at this level.
+<span class="lineNum">     309 </span>                :            :  *
+<span class="lineNum">     310 </span>                :            :  * Returns true if no solution exists.  Returns false if a deadlock-free
+<span class="lineNum">     311 </span>                :            :  * state is attainable, in which case waitOrders[] shows the required
+<span class="lineNum">     312 </span>                :            :  * rearrangements of lock wait queues (if any).
+<a name="313"><span class="lineNum">     313 </span>                :            :  */</a>
+<span class="lineNum">     314 </span>                :            : static bool
+<span class="lineNum">     315 </span>                :<span class="lineCov">      45848 : DeadLockCheckRecurse(PGPROC *proc)</span>
+<span class="lineNum">     316 </span>                :            : {
+<span class="lineNum">     317 </span>                :            :     int         nEdges;
+<span class="lineNum">     318 </span>                :            :     int         oldPossibleConstraints;
+<span class="lineNum">     319 </span>                :            :     bool        savedList;
+<span class="lineNum">     320 </span>                :            :     int         i;
+<span class="lineNum">     321 </span>                :            : 
+<span class="lineNum">     322 </span>                :<span class="lineCov">      45848 :     nEdges = TestConfiguration(proc);</span>
+<span class="lineNum">     323 </span>        [<span class="branchCov" title="Branch 0 was taken 7481 times"> + </span><span class="branchCov" title="Branch 1 was taken 38367 times"> + </span>]:<span class="lineCov">      45848 :     if (nEdges &lt; 0)</span>
+<span class="lineNum">     324 </span>                :<span class="lineCov">       7481 :         return true;            /* hard deadlock --- no solution */</span>
+<span class="lineNum">     325 </span>        [<span class="branchCov" title="Branch 0 was taken 30165 times"> + </span><span class="branchCov" title="Branch 1 was taken 8202 times"> + </span>]:<span class="lineCov">      38367 :     if (nEdges == 0)</span>
+<span class="lineNum">     326 </span>                :<span class="lineCov">      30165 :         return false;           /* good configuration found */</span>
+<span class="lineNum">     327 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 8202 times"> + </span>]:<span class="lineCov">       8202 :     if (nCurConstraints &gt;= maxCurConstraints)</span>
+<span class="lineNum">     328 </span>                :<span class="lineNoCov">          0 :         return true;            /* out of room for active constraints? */</span>
+<span class="lineNum">     329 </span>                :<span class="lineCov">       8202 :     oldPossibleConstraints = nPossibleConstraints;</span>
+<span class="lineNum">     330 </span>        [<span class="branchCov" title="Branch 0 was taken 8202 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">       8202 :     if (nPossibleConstraints + nEdges + MaxBackends &lt;= maxPossibleConstraints)</span>
+<span class="lineNum">     331 </span>                :            :     {
+<span class="lineNum">     332 </span>                :            :         /* We can save the edge list in possibleConstraints[] */
+<span class="lineNum">     333 </span>                :<span class="lineCov">       8202 :         nPossibleConstraints += nEdges;</span>
+<span class="lineNum">     334 </span>                :<span class="lineCov">       8202 :         savedList = true;</span>
+<span class="lineNum">     335 </span>                :            :     }
+<span class="lineNum">     336 </span>                :            :     else
+<span class="lineNum">     337 </span>                :            :     {
+<span class="lineNum">     338 </span>                :            :         /* Not room; will need to regenerate the edges on-the-fly */
+<span class="lineNum">     339 </span>                :<span class="lineNoCov">          0 :         savedList = false;</span>
+<span class="lineNum">     340 </span>                :            :     }
+<span class="lineNum">     341 </span>                :            : 
+<span class="lineNum">     342 </span>                :            :     /*
+<span class="lineNum">     343 </span>                :            :      * Try each available soft edge as an addition to the configuration.
+<span class="lineNum">     344 </span>                :            :      */
+<span class="lineNum">     345 </span>        [<span class="branchCov" title="Branch 0 was taken 9337 times"> + </span><span class="branchCov" title="Branch 1 was taken 2906 times"> + </span>]:<span class="lineCov">      12243 :     for (i = 0; i &lt; nEdges; i++)</span>
+<span class="lineNum">     346 </span>                :            :     {
+<span class="lineNum">     347 </span>[<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 9337 times"> + </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineCov">       9337 :         if (!savedList &amp;&amp; i &gt; 0)</span>
+<span class="lineNum">     348 </span>                :            :         {
+<span class="lineNum">     349 </span>                :            :             /* Regenerate the list of possible added constraints */
+<span class="lineNum">     350 </span>        [<span class="branchNoExec" title="Branch 1 was not executed"> # </span><span class="branchNoExec" title="Branch 2 was not executed"> # </span>]:<span class="lineNoCov">          0 :             if (nEdges != TestConfiguration(proc))</span>
+<span class="lineNum">     351 </span>                :<span class="lineNoCov">          0 :                 elog(FATAL, &quot;inconsistent results during deadlock check&quot;);</span>
+<span class="lineNum">     352 </span>                :            :         }
+<span class="lineNum">     353 </span>                :<span class="lineCov">      18674 :         curConstraints[nCurConstraints] =</span>
+<span class="lineNum">     354 </span>                :<span class="lineCov">       9337 :             possibleConstraints[oldPossibleConstraints + i];</span>
+<span class="lineNum">     355 </span>                :<span class="lineCov">       9337 :         nCurConstraints++;</span>
+<span class="lineNum">     356 </span>        [<span class="branchCov" title="Branch 1 was taken 5296 times"> + </span><span class="branchCov" title="Branch 2 was taken 4041 times"> + </span>]:<span class="lineCov">       9337 :         if (!DeadLockCheckRecurse(proc))</span>
+<span class="lineNum">     357 </span>                :<span class="lineCov">       5296 :             return false;       /* found a valid solution! */</span>
+<span class="lineNum">     358 </span>                :            :         /* give up on that added constraint, try again */
+<span class="lineNum">     359 </span>                :<span class="lineCov">       4041 :         nCurConstraints--;</span>
+<span class="lineNum">     360 </span>                :            :     }
+<span class="lineNum">     361 </span>                :<span class="lineCov">       2906 :     nPossibleConstraints = oldPossibleConstraints;</span>
+<span class="lineNum">     362 </span>                :<span class="lineCov">       2906 :     return true;                /* no solution found */</span>
+<span class="lineNum">     363 </span>                :            : }
+<span class="lineNum">     364 </span>                :            : 
+<span class="lineNum">     365 </span>                :            : 
+<span class="lineNum">     366 </span>                :            : /*--------------------
+<span class="lineNum">     367 </span>                :            :  * Test a configuration (current set of constraints) for validity.
+<span class="lineNum">     368 </span>                :            :  *
+<span class="lineNum">     369 </span>                :            :  * Returns:
+<span class="lineNum">     370 </span>                :            :  *      0: the configuration is good (no deadlocks)
+<span class="lineNum">     371 </span>                :            :  *     -1: the configuration has a hard deadlock or is not self-consistent
+<span class="lineNum">     372 </span>                :            :  *      &gt;0: the configuration has one or more soft deadlocks
+<span class="lineNum">     373 </span>                :            :  *
+<span class="lineNum">     374 </span>                :            :  * In the soft-deadlock case, one of the soft cycles is chosen arbitrarily
+<span class="lineNum">     375 </span>                :            :  * and a list of its soft edges is returned beginning at
+<span class="lineNum">     376 </span>                :            :  * possibleConstraints+nPossibleConstraints.  The return value is the
+<span class="lineNum">     377 </span>                :            :  * number of soft edges.
+<span class="lineNum">     378 </span>                :            :  *--------------------
+<a name="379"><span class="lineNum">     379 </span>                :            :  */</a>
+<span class="lineNum">     380 </span>                :            : static int
+<span class="lineNum">     381 </span>                :<span class="lineCov">      45848 : TestConfiguration(PGPROC *startProc)</span>
+<span class="lineNum">     382 </span>                :            : {
+<span class="lineNum">     383 </span>                :<span class="lineCov">      45848 :     int         softFound = 0;</span>
+<span class="lineNum">     384 </span>                :<span class="lineCov">      45848 :     EDGE       *softEdges = possibleConstraints + nPossibleConstraints;</span>
+<span class="lineNum">     385 </span>                :            :     int         nSoftEdges;
+<span class="lineNum">     386 </span>                :            :     int         i;
+<span class="lineNum">     387 </span>                :            : 
+<span class="lineNum">     388 </span>                :            :     /*
+<span class="lineNum">     389 </span>                :            :      * Make sure we have room for FindLockCycle's output.
+<span class="lineNum">     390 </span>                :            :      */
+<span class="lineNum">     391 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 45848 times"> + </span>]:<span class="lineCov">      45848 :     if (nPossibleConstraints + MaxBackends &gt; maxPossibleConstraints)</span>
+<span class="lineNum">     392 </span>                :<span class="lineNoCov">          0 :         return -1;</span>
+<span class="lineNum">     393 </span>                :            : 
+<span class="lineNum">     394 </span>                :            :     /*
+<span class="lineNum">     395 </span>                :            :      * Expand current constraint set into wait orderings.  Fail if the
+<span class="lineNum">     396 </span>                :            :      * constraint set is not self-consistent.
+<span class="lineNum">     397 </span>                :            :      */
+<span class="lineNum">     398 </span>        [<span class="branchCov" title="Branch 1 was taken 67 times"> + </span><span class="branchCov" title="Branch 2 was taken 45781 times"> + </span>]:<span class="lineCov">      45848 :     if (!ExpandConstraints(curConstraints, nCurConstraints))</span>
+<span class="lineNum">     399 </span>                :<span class="lineCov">         67 :         return -1;</span>
+<span class="lineNum">     400 </span>                :            : 
+<span class="lineNum">     401 </span>                :            :     /*
+<span class="lineNum">     402 </span>                :            :      * Check for cycles involving startProc or any of the procs mentioned in
+<span class="lineNum">     403 </span>                :            :      * constraints.  We check startProc last because if it has a soft cycle
+<span class="lineNum">     404 </span>                :            :      * still to be dealt with, we want to deal with that first.
+<span class="lineNum">     405 </span>                :            :      */
+<span class="lineNum">     406 </span>        [<span class="branchCov" title="Branch 0 was taken 27244 times"> + </span><span class="branchCov" title="Branch 1 was taken 44006 times"> + </span>]:<span class="lineCov">      71250 :     for (i = 0; i &lt; nCurConstraints; i++)</span>
+<span class="lineNum">     407 </span>                :            :     {
+<span class="lineNum">     408 </span>        [<span class="branchCov" title="Branch 1 was taken 4365 times"> + </span><span class="branchCov" title="Branch 2 was taken 22879 times"> + </span>]:<span class="lineCov">      27244 :         if (FindLockCycle(curConstraints[i].waiter, softEdges, &amp;nSoftEdges))</span>
+<span class="lineNum">     409 </span>                :            :         {
+<span class="lineNum">     410 </span>        [<span class="branchCov" title="Branch 0 was taken 1174 times"> + </span><span class="branchCov" title="Branch 1 was taken 3191 times"> + </span>]:<span class="lineCov">       4365 :             if (nSoftEdges == 0)</span>
+<span class="lineNum">     411 </span>                :<span class="lineCov">       1174 :                 return -1;      /* hard deadlock detected */</span>
+<span class="lineNum">     412 </span>                :<span class="lineCov">       3191 :             softFound = nSoftEdges;</span>
+<span class="lineNum">     413 </span>                :            :         }
+<span class="lineNum">     414 </span>        [<span class="branchCov" title="Branch 1 was taken 14194 times"> + </span><span class="branchCov" title="Branch 2 was taken 11876 times"> + </span>]:<span class="lineCov">      26070 :         if (FindLockCycle(curConstraints[i].blocker, softEdges, &amp;nSoftEdges))</span>
+<span class="lineNum">     415 </span>                :            :         {
+<span class="lineNum">     416 </span>        [<span class="branchCov" title="Branch 0 was taken 601 times"> + </span><span class="branchCov" title="Branch 1 was taken 13593 times"> + </span>]:<span class="lineCov">      14194 :             if (nSoftEdges == 0)</span>
+<span class="lineNum">     417 </span>                :<span class="lineCov">        601 :                 return -1;      /* hard deadlock detected */</span>
+<span class="lineNum">     418 </span>                :<span class="lineCov">      13593 :             softFound = nSoftEdges;</span>
+<span class="lineNum">     419 </span>                :            :         }
+<span class="lineNum">     420 </span>                :            :     }
+<span class="lineNum">     421 </span>        [<span class="branchCov" title="Branch 1 was taken 11276 times"> + </span><span class="branchCov" title="Branch 2 was taken 32730 times"> + </span>]:<span class="lineCov">      44006 :     if (FindLockCycle(startProc, softEdges, &amp;nSoftEdges))</span>
+<span class="lineNum">     422 </span>                :            :     {
+<span class="lineNum">     423 </span>        [<span class="branchCov" title="Branch 0 was taken 5639 times"> + </span><span class="branchCov" title="Branch 1 was taken 5637 times"> + </span>]:<span class="lineCov">      11276 :         if (nSoftEdges == 0)</span>
+<span class="lineNum">     424 </span>                :<span class="lineCov">       5639 :             return -1;          /* hard deadlock detected */</span>
+<span class="lineNum">     425 </span>                :<span class="lineCov">       5637 :         softFound = nSoftEdges;</span>
+<span class="lineNum">     426 </span>                :            :     }
+<span class="lineNum">     427 </span>                :<span class="lineCov">      45848 :     return softFound;</span>
+<span class="lineNum">     428 </span>                :            : }
+<span class="lineNum">     429 </span>                :            : 
+<span class="lineNum">     430 </span>                :            : 
+<span class="lineNum">     431 </span>                :            : /*
+<span class="lineNum">     432 </span>                :            :  * FindLockCycle -- basic check for deadlock cycles
+<span class="lineNum">     433 </span>                :            :  *
+<span class="lineNum">     434 </span>                :            :  * Scan outward from the given proc to see if there is a cycle in the
+<span class="lineNum">     435 </span>                :            :  * waits-for graph that includes this proc.  Return true if a cycle
+<span class="lineNum">     436 </span>                :            :  * is found, else false.  If a cycle is found, we return a list of
+<span class="lineNum">     437 </span>                :            :  * the &quot;soft edges&quot;, if any, included in the cycle.  These edges could
+<span class="lineNum">     438 </span>                :            :  * potentially be eliminated by rearranging wait queues.  We also fill
+<span class="lineNum">     439 </span>                :            :  * deadlockDetails[] with information about the detected cycle; this info
+<span class="lineNum">     440 </span>                :            :  * is not used by the deadlock algorithm itself, only to print a useful
+<span class="lineNum">     441 </span>                :            :  * message after failing.
+<span class="lineNum">     442 </span>                :            :  *
+<span class="lineNum">     443 </span>                :            :  * Since we need to be able to check hypothetical configurations that would
+<span class="lineNum">     444 </span>                :            :  * exist after wait queue rearrangement, the routine pays attention to the
+<span class="lineNum">     445 </span>                :            :  * table of hypothetical queue orders in waitOrders[].  These orders will
+<span class="lineNum">     446 </span>                :            :  * be believed in preference to the actual ordering seen in the locktable.
+<a name="447"><span class="lineNum">     447 </span>                :            :  */</a>
+<span class="lineNum">     448 </span>                :            : static bool
+<span class="lineNum">     449 </span>                :<span class="lineCov">     103666 : FindLockCycle(PGPROC *checkProc,</span>
+<span class="lineNum">     450 </span>                :            :               EDGE *softEdges,  /* output argument */
+<span class="lineNum">     451 </span>                :            :               int *nSoftEdges)  /* output argument */
+<span class="lineNum">     452 </span>                :            : {
+<span class="lineNum">     453 </span>                :<span class="lineCov">     103666 :     nVisitedProcs = 0;</span>
+<span class="lineNum">     454 </span>                :<span class="lineCov">     103666 :     nDeadlockDetails = 0;</span>
+<span class="lineNum">     455 </span>                :<span class="lineCov">     103666 :     *nSoftEdges = 0;</span>
+<span class="lineNum">     456 </span>                :<span class="lineCov">     103666 :     return FindLockCycleRecurse(checkProc, 0, softEdges, nSoftEdges);</span>
+<span class="lineNum">     457 </span>                :            : }
+<a name="458"><span class="lineNum">     458 </span>                :            : </a>
+<span class="lineNum">     459 </span>                :            : static bool
+<span class="lineNum">     460 </span>                :<span class="lineCov">    1949335 : FindLockCycleRecurse(PGPROC *checkProc,</span>
+<span class="lineNum">     461 </span>                :            :                      int depth,
+<span class="lineNum">     462 </span>                :            :                      EDGE *softEdges,   /* output argument */
+<span class="lineNum">     463 </span>                :            :                      int *nSoftEdges)   /* output argument */
+<span class="lineNum">     464 </span>                :            : {
+<span class="lineNum">     465 </span>                :            :     int         i;
+<span class="lineNum">     466 </span>                :            :     dlist_iter  iter;
+<span class="lineNum">     467 </span>                :            : 
+<span class="lineNum">     468 </span>                :            :     /*
+<span class="lineNum">     469 </span>                :            :      * If this process is a lock group member, check the leader instead. (Note
+<span class="lineNum">     470 </span>                :            :      * that we might be the leader, in which case this is a no-op.)
+<span class="lineNum">     471 </span>                :            :      */
+<span class="lineNum">     472 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 1949335 times"> + </span>]:<span class="lineCov">    1949335 :     if (checkProc-&gt;lockGroupLeader != NULL)</span>
+<span class="lineNum">     473 </span>                :<span class="lineNoCov">          0 :         checkProc = checkProc-&gt;lockGroupLeader;</span>
+<span class="lineNum">     474 </span>                :            : 
+<span class="lineNum">     475 </span>                :            :     /*
+<span class="lineNum">     476 </span>                :            :      * Have we already seen this proc?
+<span class="lineNum">     477 </span>                :            :      */
+<span class="lineNum">     478 </span>        [<span class="branchCov" title="Branch 0 was taken 17176119 times"> + </span><span class="branchCov" title="Branch 1 was taken 976199 times"> + </span>]:<span class="lineCov">   18152318 :     for (i = 0; i &lt; nVisitedProcs; i++)</span>
+<span class="lineNum">     479 </span>                :            :     {
+<span class="lineNum">     480 </span>        [<span class="branchCov" title="Branch 0 was taken 973136 times"> + </span><span class="branchCov" title="Branch 1 was taken 16202983 times"> + </span>]:<span class="lineCov">   17176119 :         if (visitedProcs[i] == checkProc)</span>
+<span class="lineNum">     481 </span>                :            :         {
+<span class="lineNum">     482 </span>                :            :             /* If we return to starting point, we have a deadlock cycle */
+<span class="lineNum">     483 </span>        [<span class="branchCov" title="Branch 0 was taken 36181 times"> + </span><span class="branchCov" title="Branch 1 was taken 936955 times"> + </span>]:<span class="lineCov">     973136 :             if (i == 0)</span>
+<span class="lineNum">     484 </span>                :            :             {
+<span class="lineNum">     485 </span>                :            :                 /*
+<span class="lineNum">     486 </span>                :            :                  * record total length of cycle --- outer levels will now fill
+<span class="lineNum">     487 </span>                :            :                  * deadlockDetails[]
+<span class="lineNum">     488 </span>                :            :                  */
+<span class="lineNum">     489 </span>                :            :                 Assert(depth &lt;= MaxBackends);
+<span class="lineNum">     490 </span>                :<span class="lineCov">      36181 :                 nDeadlockDetails = depth;</span>
+<span class="lineNum">     491 </span>                :            : 
+<span class="lineNum">     492 </span>                :<span class="lineCov">      36181 :                 return true;</span>
+<span class="lineNum">     493 </span>                :            :             }
+<span class="lineNum">     494 </span>                :            : 
+<span class="lineNum">     495 </span>                :            :             /*
+<span class="lineNum">     496 </span>                :            :              * Otherwise, we have a cycle but it does not include the start
+<span class="lineNum">     497 </span>                :            :              * point, so say &quot;no deadlock&quot;.
+<span class="lineNum">     498 </span>                :            :              */
+<span class="lineNum">     499 </span>                :<span class="lineCov">     936955 :             return false;</span>
+<span class="lineNum">     500 </span>                :            :         }
+<span class="lineNum">     501 </span>                :            :     }
+<span class="lineNum">     502 </span>                :            :     /* Mark proc as seen */
+<span class="lineNum">     503 </span>                :            :     Assert(nVisitedProcs &lt; MaxBackends);
+<span class="lineNum">     504 </span>                :<span class="lineCov">     976199 :     visitedProcs[nVisitedProcs++] = checkProc;</span>
+<span class="lineNum">     505 </span>                :            : 
+<span class="lineNum">     506 </span>                :            :     /*
+<span class="lineNum">     507 </span>                :            :      * If the process is waiting, there is an outgoing waits-for edge to each
+<span class="lineNum">     508 </span>                :            :      * process that blocks it.
+<span class="lineNum">     509 </span>                :            :      */
+<span class="lineNum">     510 </span>        [<span class="branchCov" title="Branch 0 was taken 904979 times"> + </span><span class="branchCov" title="Branch 1 was taken 71220 times"> + </span>]:<span class="lineCov">    1881178 :     if (checkProc-&gt;links.next != NULL &amp;&amp; checkProc-&gt;waitLock != NULL &amp;&amp;</span>
+<span class="lineNum">         </span>  [<span class="branchCov" title="Branch 2 was taken 904979 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span><span class="branchCov" title="Branch 4 was taken 143659 times"> + </span><span class="branchCov" title="Branch 5 was taken 761320 times"> + </span>]
+<span class="lineNum">     511 </span>                :<span class="lineCov">     904979 :         FindLockCycleRecurseMember(checkProc, checkProc, depth, softEdges,</span>
+<span class="lineNum">     512 </span>                :            :                                    nSoftEdges))
+<span class="lineNum">     513 </span>                :<span class="lineCov">     143659 :         return true;</span>
+<span class="lineNum">     514 </span>                :            : 
+<span class="lineNum">     515 </span>                :            :     /*
+<span class="lineNum">     516 </span>                :            :      * If the process is not waiting, there could still be outgoing waits-for
+<span class="lineNum">     517 </span>                :            :      * edges if it is part of a lock group, because other members of the lock
+<span class="lineNum">     518 </span>                :            :      * group might be waiting even though this process is not.  (Given lock
+<span class="lineNum">     519 </span>                :            :      * groups {A1, A2} and {B1, B2}, if A1 waits for B1 and B2 waits for A2,
+<span class="lineNum">     520 </span>                :            :      * that is a deadlock even neither of B1 and A2 are waiting for anything.)
+<span class="lineNum">     521 </span>                :            :      */
+<span class="lineNum">     522 </span>[<span class="branchCov" title="Branch 0 was taken 832540 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchNoCov" title="Branch 2 was not taken"> - </span><span class="branchCov" title="Branch 3 was taken 832540 times"> + </span>]:<span class="lineCov">     832540 :     dlist_foreach(iter, &amp;checkProc-&gt;lockGroupMembers)</span>
+<span class="lineNum">     523 </span>                :            :     {
+<span class="lineNum">     524 </span>                :            :         PGPROC     *memberProc;
+<span class="lineNum">     525 </span>                :            : 
+<span class="lineNum">     526 </span>                :<span class="lineNoCov">          0 :         memberProc = dlist_container(PGPROC, lockGroupLink, iter.cur);</span>
+<span class="lineNum">     527 </span>                :            : 
+<span class="lineNum">     528 </span>[<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>][<span class="branchNoExec" title="Branch 2 was not executed"> # </span><span class="branchNoExec" title="Branch 3 was not executed"> # </span>]:<span class="lineNoCov">          0 :         if (memberProc-&gt;links.next != NULL &amp;&amp; memberProc-&gt;waitLock != NULL &amp;&amp;</span>
+<span class="lineNum">         </span>        [<span class="branchNoExec" title="Branch 4 was not executed"> # </span><span class="branchNoExec" title="Branch 5 was not executed"> # </span>]
+<span class="lineNum">     529 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             memberProc != checkProc &amp;&amp;</span>
+<span class="lineNum">     530 </span>                :<span class="lineNoCov">          0 :             FindLockCycleRecurseMember(memberProc, checkProc, depth, softEdges,</span>
+<span class="lineNum">     531 </span>                :            :                                        nSoftEdges))
+<span class="lineNum">     532 </span>                :<span class="lineNoCov">          0 :             return true;</span>
+<span class="lineNum">     533 </span>                :            :     }
+<span class="lineNum">     534 </span>                :            : 
+<span class="lineNum">     535 </span>                :<span class="lineCov">    1949335 :     return false;</span>
+<span class="lineNum">     536 </span>                :            : }
+<a name="537"><span class="lineNum">     537 </span>                :            : </a>
+<span class="lineNum">     538 </span>                :            : static bool
+<span class="lineNum">     539 </span>                :<span class="lineCov">     904979 : FindLockCycleRecurseMember(PGPROC *checkProc,</span>
+<span class="lineNum">     540 </span>                :            :                            PGPROC *checkProcLeader,
+<span class="lineNum">     541 </span>                :            :                            int depth,
+<span class="lineNum">     542 </span>                :            :                            EDGE *softEdges, /* output argument */
+<span class="lineNum">     543 </span>                :            :                            int *nSoftEdges) /* output argument */
+<span class="lineNum">     544 </span>                :            : {
+<span class="lineNum">     545 </span>                :            :     PGPROC     *proc;
+<span class="lineNum">     546 </span>                :<span class="lineCov">     904979 :     LOCK       *lock = checkProc-&gt;waitLock;</span>
+<span class="lineNum">     547 </span>                :            :     PGXACT     *pgxact;
+<span class="lineNum">     548 </span>                :            :     PROCLOCK   *proclock;
+<span class="lineNum">     549 </span>                :            :     SHM_QUEUE  *procLocks;
+<span class="lineNum">     550 </span>                :            :     LockMethod  lockMethodTable;
+<span class="lineNum">     551 </span>                :            :     PROC_QUEUE *waitQueue;
+<span class="lineNum">     552 </span>                :            :     int         queue_size;
+<span class="lineNum">     553 </span>                :            :     int         conflictMask;
+<span class="lineNum">     554 </span>                :            :     int         i;
+<span class="lineNum">     555 </span>                :            :     int         numLockModes,
+<span class="lineNum">     556 </span>                :            :                 lm;
+<span class="lineNum">     557 </span>                :            : 
+<span class="lineNum">     558 </span>                :<span class="lineCov">     904979 :     lockMethodTable = GetLocksMethodTable(lock);</span>
+<span class="lineNum">     559 </span>                :<span class="lineCov">     904979 :     numLockModes = lockMethodTable-&gt;numLockModes;</span>
+<span class="lineNum">     560 </span>                :<span class="lineCov">     904979 :     conflictMask = lockMethodTable-&gt;conflictTab[checkProc-&gt;waitLockMode];</span>
+<span class="lineNum">     561 </span>                :            : 
+<span class="lineNum">     562 </span>                :            :     /*
+<span class="lineNum">     563 </span>                :            :      * Scan for procs that already hold conflicting locks.  These are &quot;hard&quot;
+<span class="lineNum">     564 </span>                :            :      * edges in the waits-for graph.
+<span class="lineNum">     565 </span>                :            :      */
+<span class="lineNum">     566 </span>                :<span class="lineCov">     904979 :     procLocks = &amp;(lock-&gt;procLocks);</span>
+<span class="lineNum">     567 </span>                :            : 
+<span class="lineNum">     568 </span>                :<span class="lineCov">     904979 :     proclock = (PROCLOCK *) SHMQueueNext(procLocks, procLocks,</span>
+<span class="lineNum">     569 </span>                :            :                                          offsetof(PROCLOCK, lockLink));
+<span class="lineNum">     570 </span>                :            : 
+<span class="lineNum">     571 </span>        [<span class="branchCov" title="Branch 0 was taken 16377146 times"> + </span><span class="branchCov" title="Branch 1 was taken 796970 times"> + </span>]:<span class="lineCov">   17174116 :     while (proclock)</span>
+<span class="lineNum">     572 </span>                :            :     {
+<span class="lineNum">     573 </span>                :            :         PGPROC     *leader;
+<span class="lineNum">     574 </span>                :            : 
+<span class="lineNum">     575 </span>                :<span class="lineCov">   16377146 :         proc = proclock-&gt;tag.myProc;</span>
+<span class="lineNum">     576 </span>                :<span class="lineCov">   16377146 :         pgxact = &amp;ProcGlobal-&gt;allPgXact[proc-&gt;pgprocno];</span>
+<span class="lineNum">     577 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 16377146 times"> + </span>]:<span class="lineCov">   16377146 :         leader = proc-&gt;lockGroupLeader == NULL ? proc : proc-&gt;lockGroupLeader;</span>
+<span class="lineNum">     578 </span>                :            : 
+<span class="lineNum">     579 </span>                :            :         /* A proc never blocks itself or any other lock group member */
+<span class="lineNum">     580 </span>        [<span class="branchCov" title="Branch 0 was taken 15574388 times"> + </span><span class="branchCov" title="Branch 1 was taken 802758 times"> + </span>]:<span class="lineCov">   16377146 :         if (leader != checkProcLeader)</span>
+<span class="lineNum">     581 </span>                :            :         {
+<span class="lineNum">     582 </span>        [<span class="branchCov" title="Branch 0 was taken 119714143 times"> + </span><span class="branchCov" title="Branch 1 was taken 14523390 times"> + </span>]:<span class="lineCov">  134237533 :             for (lm = 1; lm &lt;= numLockModes; lm++)</span>
+<span class="lineNum">     583 </span>                :            :             {
+<span class="lineNum">     584 </span>[<span class="branchCov" title="Branch 0 was taken 4859074 times"> + </span><span class="branchCov" title="Branch 1 was taken 114855069 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 1050998 times"> + </span><span class="branchCov" title="Branch 3 was taken 3808076 times"> + </span>]:<span class="lineCov">  119714143 :                 if ((proclock-&gt;holdMask &amp; LOCKBIT_ON(lm)) &amp;&amp;</span>
+<span class="lineNum">     585 </span>                :            :                     (conflictMask &amp; LOCKBIT_ON(lm)))
+<span class="lineNum">     586 </span>                :            :                 {
+<span class="lineNum">     587 </span>                :            :                     /* This proc hard-blocks checkProc */
+<span class="lineNum">     588 </span>        [<span class="branchCov" title="Branch 1 was taken 108009 times"> + </span><span class="branchCov" title="Branch 2 was taken 942989 times"> + </span>]:<span class="lineCov">    1050998 :                     if (FindLockCycleRecurse(proc, depth + 1,</span>
+<span class="lineNum">     589 </span>                :            :                                              softEdges, nSoftEdges))
+<span class="lineNum">     590 </span>                :            :                     {
+<span class="lineNum">     591 </span>                :            :                         /* fill deadlockDetails[] */
+<span class="lineNum">     592 </span>                :<span class="lineCov">     108009 :                         DEADLOCK_INFO *info = &amp;deadlockDetails[depth];</span>
+<span class="lineNum">     593 </span>                :            : 
+<span class="lineNum">     594 </span>                :<span class="lineCov">     108009 :                         info-&gt;locktag = lock-&gt;tag;</span>
+<span class="lineNum">     595 </span>                :<span class="lineCov">     108009 :                         info-&gt;lockmode = checkProc-&gt;waitLockMode;</span>
+<span class="lineNum">     596 </span>                :<span class="lineCov">     108009 :                         info-&gt;pid = checkProc-&gt;pid;</span>
+<span class="lineNum">     597 </span>                :            : 
+<span class="lineNum">     598 </span>                :<span class="lineCov">     108009 :                         return true;</span>
+<span class="lineNum">     599 </span>                :            :                     }
+<span class="lineNum">     600 </span>                :            : 
+<span class="lineNum">     601 </span>                :            :                     /*
+<span class="lineNum">     602 </span>                :            :                      * No deadlock here, but see if this proc is an autovacuum
+<span class="lineNum">     603 </span>                :            :                      * that is directly hard-blocking our own proc.  If so,
+<span class="lineNum">     604 </span>                :            :                      * report it so that the caller can send a cancel signal
+<span class="lineNum">     605 </span>                :            :                      * to it, if appropriate.  If there's more than one such
+<span class="lineNum">     606 </span>                :            :                      * proc, it's indeterminate which one will be reported.
+<span class="lineNum">     607 </span>                :            :                      *
+<span class="lineNum">     608 </span>                :            :                      * We don't touch autovacuums that are indirectly blocking
+<span class="lineNum">     609 </span>                :            :                      * us; it's up to the direct blockee to take action.  This
+<span class="lineNum">     610 </span>                :            :                      * rule simplifies understanding the behavior and ensures
+<span class="lineNum">     611 </span>                :            :                      * that an autovacuum won't be canceled with less than
+<span class="lineNum">     612 </span>                :            :                      * deadlock_timeout grace period.
+<span class="lineNum">     613 </span>                :            :                      *
+<span class="lineNum">     614 </span>                :            :                      * Note we read vacuumFlags without any locking.  This is
+<span class="lineNum">     615 </span>                :            :                      * OK only for checking the PROC_IS_AUTOVACUUM flag,
+<span class="lineNum">     616 </span>                :            :                      * because that flag is set at process start and never
+<span class="lineNum">     617 </span>                :            :                      * reset.  There is logic elsewhere to avoid canceling an
+<span class="lineNum">     618 </span>                :            :                      * autovacuum that is working to prevent XID wraparound
+<span class="lineNum">     619 </span>                :            :                      * problems (which needs to read a different vacuumFlag
+<span class="lineNum">     620 </span>                :            :                      * bit), but we don't do that here to avoid grabbing
+<span class="lineNum">     621 </span>                :            :                      * ProcArrayLock.
+<span class="lineNum">     622 </span>                :            :                      */
+<span class="lineNum">     623 </span>[<span class="branchCov" title="Branch 0 was taken 41598 times"> + </span><span class="branchCov" title="Branch 1 was taken 901391 times"> + </span>][<span class="branchNoCov" title="Branch 2 was not taken"> - </span><span class="branchCov" title="Branch 3 was taken 41598 times"> + </span>]:<span class="lineCov">     942989 :                     if (checkProc == MyProc &amp;&amp;</span>
+<span class="lineNum">     624 </span>                :<span class="lineCov">      41598 :                         pgxact-&gt;vacuumFlags &amp; PROC_IS_AUTOVACUUM)</span>
+<span class="lineNum">     625 </span>                :<span class="lineNoCov">          0 :                         blocking_autovacuum_proc = proc;</span>
+<span class="lineNum">     626 </span>                :            : 
+<span class="lineNum">     627 </span>                :            :                     /* We're done looking at this proclock */
+<span class="lineNum">     628 </span>                :<span class="lineCov">     942989 :                     break;</span>
+<span class="lineNum">     629 </span>                :            :                 }
+<span class="lineNum">     630 </span>                :            :             }
+<span class="lineNum">     631 </span>                :            :         }
+<span class="lineNum">     632 </span>                :            : 
+<span class="lineNum">     633 </span>                :<span class="lineCov">   16269137 :         proclock = (PROCLOCK *) SHMQueueNext(procLocks, &amp;proclock-&gt;lockLink,</span>
+<span class="lineNum">     634 </span>                :            :                                              offsetof(PROCLOCK, lockLink));
+<span class="lineNum">     635 </span>                :            :     }
+<span class="lineNum">     636 </span>                :            : 
+<span class="lineNum">     637 </span>                :            :     /*
+<span class="lineNum">     638 </span>                :            :      * Scan for procs that are ahead of this one in the lock's wait queue.
+<span class="lineNum">     639 </span>                :            :      * Those that have conflicting requests soft-block this one.  This must be
+<span class="lineNum">     640 </span>                :            :      * done after the hard-block search, since if another proc both hard- and
+<span class="lineNum">     641 </span>                :            :      * soft-blocks this one, we want to call it a hard edge.
+<span class="lineNum">     642 </span>                :            :      *
+<span class="lineNum">     643 </span>                :            :      * If there is a proposed re-ordering of the lock's wait order, use that
+<span class="lineNum">     644 </span>                :            :      * rather than the current wait order.
+<span class="lineNum">     645 </span>                :            :      */
+<span class="lineNum">     646 </span>        [<span class="branchCov" title="Branch 0 was taken 606969 times"> + </span><span class="branchCov" title="Branch 1 was taken 490625 times"> + </span>]:<span class="lineCov">    1097594 :     for (i = 0; i &lt; nWaitOrders; i++)</span>
+<span class="lineNum">     647 </span>                :            :     {
+<span class="lineNum">     648 </span>        [<span class="branchCov" title="Branch 0 was taken 306345 times"> + </span><span class="branchCov" title="Branch 1 was taken 300624 times"> + </span>]:<span class="lineCov">     606969 :         if (waitOrders[i].lock == lock)</span>
+<span class="lineNum">     649 </span>                :<span class="lineCov">     306345 :             break;</span>
+<span class="lineNum">     650 </span>                :            :     }
+<span class="lineNum">     651 </span>                :            : 
+<span class="lineNum">     652 </span>        [<span class="branchCov" title="Branch 0 was taken 306345 times"> + </span><span class="branchCov" title="Branch 1 was taken 490625 times"> + </span>]:<span class="lineCov">     796970 :     if (i &lt; nWaitOrders)</span>
+<span class="lineNum">     653 </span>                :            :     {
+<span class="lineNum">     654 </span>                :            :         /* Use the given hypothetical wait queue order */
+<span class="lineNum">     655 </span>                :<span class="lineCov">     306345 :         PGPROC    **procs = waitOrders[i].procs;</span>
+<span class="lineNum">     656 </span>                :            : 
+<span class="lineNum">     657 </span>                :<span class="lineCov">     306345 :         queue_size = waitOrders[i].nProcs;</span>
+<span class="lineNum">     658 </span>                :            : 
+<span class="lineNum">     659 </span>        [<span class="branchCov" title="Branch 0 was taken 1763710 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">    2048026 :         for (i = 0; i &lt; queue_size; i++)</span>
+<span class="lineNum">     660 </span>                :            :         {
+<span class="lineNum">     661 </span>                :            :             PGPROC     *leader;
+<span class="lineNum">     662 </span>                :            : 
+<span class="lineNum">     663 </span>                :<span class="lineCov">    1763710 :             proc = procs[i];</span>
+<span class="lineNum">     664 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 1763710 times"> + </span>]:<span class="lineCov">    1763710 :             leader = proc-&gt;lockGroupLeader == NULL ? proc :</span>
+<span class="lineNum">     665 </span>                :            :                 proc-&gt;lockGroupLeader;
+<span class="lineNum">     666 </span>                :            : 
+<span class="lineNum">     667 </span>                :            :             /*
+<span class="lineNum">     668 </span>                :            :              * TopoSort will always return an ordering with group members
+<span class="lineNum">     669 </span>                :            :              * adjacent to each other in the wait queue (see comments
+<span class="lineNum">     670 </span>                :            :              * therein). So, as soon as we reach a process in the same lock
+<span class="lineNum">     671 </span>                :            :              * group as checkProc, we know we've found all the conflicts that
+<span class="lineNum">     672 </span>                :            :              * precede any member of the lock group lead by checkProcLeader.
+<span class="lineNum">     673 </span>                :            :              */
+<span class="lineNum">     674 </span>        [<span class="branchCov" title="Branch 0 was taken 284316 times"> + </span><span class="branchCov" title="Branch 1 was taken 1479394 times"> + </span>]:<span class="lineCov">    1763710 :             if (leader == checkProcLeader)</span>
+<span class="lineNum">     675 </span>                :<span class="lineCov">     284316 :                 break;</span>
+<span class="lineNum">     676 </span>                :            : 
+<span class="lineNum">     677 </span>                :            :             /* Is there a conflict with this guy's request? */
+<span class="lineNum">     678 </span>        [<span class="branchCov" title="Branch 0 was taken 281632 times"> + </span><span class="branchCov" title="Branch 1 was taken 1197762 times"> + </span>]:<span class="lineCov">    1479394 :             if ((LOCKBIT_ON(proc-&gt;waitLockMode) &amp; conflictMask) != 0)</span>
+<span class="lineNum">     679 </span>                :            :             {
+<span class="lineNum">     680 </span>                :            :                 /* This proc soft-blocks checkProc */
+<span class="lineNum">     681 </span>        [<span class="branchCov" title="Branch 1 was taken 22029 times"> + </span><span class="branchCov" title="Branch 2 was taken 259603 times"> + </span>]:<span class="lineCov">     281632 :                 if (FindLockCycleRecurse(proc, depth + 1,</span>
+<span class="lineNum">     682 </span>                :            :                                          softEdges, nSoftEdges))
+<span class="lineNum">     683 </span>                :            :                 {
+<span class="lineNum">     684 </span>                :            :                     /* fill deadlockDetails[] */
+<span class="lineNum">     685 </span>                :<span class="lineCov">      22029 :                     DEADLOCK_INFO *info = &amp;deadlockDetails[depth];</span>
+<span class="lineNum">     686 </span>                :            : 
+<span class="lineNum">     687 </span>                :<span class="lineCov">      22029 :                     info-&gt;locktag = lock-&gt;tag;</span>
+<span class="lineNum">     688 </span>                :<span class="lineCov">      22029 :                     info-&gt;lockmode = checkProc-&gt;waitLockMode;</span>
+<span class="lineNum">     689 </span>                :<span class="lineCov">      22029 :                     info-&gt;pid = checkProc-&gt;pid;</span>
+<span class="lineNum">     690 </span>                :            : 
+<span class="lineNum">     691 </span>                :            :                     /*
+<span class="lineNum">     692 </span>                :            :                      * Add this edge to the list of soft edges in the cycle
+<span class="lineNum">     693 </span>                :            :                      */
+<span class="lineNum">     694 </span>                :            :                     Assert(*nSoftEdges &lt; MaxBackends);
+<span class="lineNum">     695 </span>                :<span class="lineCov">      22029 :                     softEdges[*nSoftEdges].waiter = checkProcLeader;</span>
+<span class="lineNum">     696 </span>                :<span class="lineCov">      22029 :                     softEdges[*nSoftEdges].blocker = leader;</span>
+<span class="lineNum">     697 </span>                :<span class="lineCov">      22029 :                     softEdges[*nSoftEdges].lock = lock;</span>
+<span class="lineNum">     698 </span>                :<span class="lineCov">      22029 :                     (*nSoftEdges)++;</span>
+<span class="lineNum">     699 </span>                :<span class="lineCov">      22029 :                     return true;</span>
+<span class="lineNum">     700 </span>                :            :                 }
+<span class="lineNum">     701 </span>                :            :             }
+<span class="lineNum">     702 </span>                :            :         }
+<span class="lineNum">     703 </span>                :            :     }
+<span class="lineNum">     704 </span>                :            :     else
+<span class="lineNum">     705 </span>                :            :     {
+<span class="lineNum">     706 </span>                :<span class="lineCov">     490625 :         PGPROC     *lastGroupMember = NULL;</span>
+<span class="lineNum">     707 </span>                :            : 
+<span class="lineNum">     708 </span>                :            :         /* Use the true lock wait queue order */
+<span class="lineNum">     709 </span>                :<span class="lineCov">     490625 :         waitQueue = &amp;(lock-&gt;waitProcs);</span>
+<span class="lineNum">     710 </span>                :            : 
+<span class="lineNum">     711 </span>                :            :         /*
+<span class="lineNum">     712 </span>                :            :          * Find the last member of the lock group that is present in the wait
+<span class="lineNum">     713 </span>                :            :          * queue.  Anything after this is not a soft lock conflict. If group
+<span class="lineNum">     714 </span>                :            :          * locking is not in use, then we know immediately which process we're
+<span class="lineNum">     715 </span>                :            :          * looking for, but otherwise we've got to search the wait queue to
+<span class="lineNum">     716 </span>                :            :          * find the last process actually present.
+<span class="lineNum">     717 </span>                :            :          */
+<span class="lineNum">     718 </span>        [<span class="branchCov" title="Branch 0 was taken 490625 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">     490625 :         if (checkProc-&gt;lockGroupLeader == NULL)</span>
+<span class="lineNum">     719 </span>                :<span class="lineCov">     490625 :             lastGroupMember = checkProc;</span>
+<span class="lineNum">     720 </span>                :            :         else
+<span class="lineNum">     721 </span>                :            :         {
+<span class="lineNum">     722 </span>                :<span class="lineNoCov">          0 :             proc = (PGPROC *) waitQueue-&gt;links.next;</span>
+<span class="lineNum">     723 </span>                :<span class="lineNoCov">          0 :             queue_size = waitQueue-&gt;size;</span>
+<span class="lineNum">     724 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :             while (queue_size-- &gt; 0)</span>
+<span class="lineNum">     725 </span>                :            :             {
+<span class="lineNum">     726 </span>        [<span class="branchNoExec" title="Branch 0 was not executed"> # </span><span class="branchNoExec" title="Branch 1 was not executed"> # </span>]:<span class="lineNoCov">          0 :                 if (proc-&gt;lockGroupLeader == checkProcLeader)</span>
+<span class="lineNum">     727 </span>                :<span class="lineNoCov">          0 :                     lastGroupMember = proc;</span>
+<span class="lineNum">     728 </span>                :<span class="lineNoCov">          0 :                 proc = (PGPROC *) proc-&gt;links.next;</span>
+<span class="lineNum">     729 </span>                :            :             }
+<span class="lineNum">     730 </span>                :            :             Assert(lastGroupMember != NULL);
+<span class="lineNum">     731 </span>                :            :         }
+<span class="lineNum">     732 </span>                :            : 
+<span class="lineNum">     733 </span>                :            :         /*
+<span class="lineNum">     734 </span>                :            :          * OK, now rescan (or scan) the queue to identify the soft conflicts.
+<span class="lineNum">     735 </span>                :            :          */
+<span class="lineNum">     736 </span>                :<span class="lineCov">     490625 :         queue_size = waitQueue-&gt;size;</span>
+<span class="lineNum">     737 </span>                :<span class="lineCov">     490625 :         proc = (PGPROC *) waitQueue-&gt;links.next;</span>
+<span class="lineNum">     738 </span>        [<span class="branchCov" title="Branch 0 was taken 2441338 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">    2441338 :         while (queue_size-- &gt; 0)</span>
+<span class="lineNum">     739 </span>                :            :         {
+<span class="lineNum">     740 </span>                :            :             PGPROC     *leader;
+<span class="lineNum">     741 </span>                :            : 
+<span class="lineNum">     742 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 2441338 times"> + </span>]:<span class="lineCov">    2441338 :             leader = proc-&gt;lockGroupLeader == NULL ? proc :</span>
+<span class="lineNum">     743 </span>                :            :                 proc-&gt;lockGroupLeader;
+<span class="lineNum">     744 </span>                :            : 
+<span class="lineNum">     745 </span>                :            :             /* Done when we reach the target proc */
+<span class="lineNum">     746 </span>        [<span class="branchCov" title="Branch 0 was taken 477004 times"> + </span><span class="branchCov" title="Branch 1 was taken 1964334 times"> + </span>]:<span class="lineCov">    2441338 :             if (proc == lastGroupMember)</span>
+<span class="lineNum">     747 </span>                :<span class="lineCov">     477004 :                 break;</span>
+<span class="lineNum">     748 </span>                :            : 
+<span class="lineNum">     749 </span>                :            :             /* Is there a conflict with this guy's request? */
+<span class="lineNum">     750 </span>[<span class="branchCov" title="Branch 0 was taken 513039 times"> + </span><span class="branchCov" title="Branch 1 was taken 1451295 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 513039 times"> + </span><span class="branchNoCov" title="Branch 3 was not taken"> - </span>]:<span class="lineCov">    1964334 :             if ((LOCKBIT_ON(proc-&gt;waitLockMode) &amp; conflictMask) != 0 &amp;&amp;</span>
+<span class="lineNum">     751 </span>                :            :                 leader != checkProcLeader)
+<span class="lineNum">     752 </span>                :            :             {
+<span class="lineNum">     753 </span>                :            :                 /* This proc soft-blocks checkProc */
+<span class="lineNum">     754 </span>        [<span class="branchCov" title="Branch 1 was taken 13621 times"> + </span><span class="branchCov" title="Branch 2 was taken 499418 times"> + </span>]:<span class="lineCov">     513039 :                 if (FindLockCycleRecurse(proc, depth + 1,</span>
+<span class="lineNum">     755 </span>                :            :                                          softEdges, nSoftEdges))
+<span class="lineNum">     756 </span>                :            :                 {
+<span class="lineNum">     757 </span>                :            :                     /* fill deadlockDetails[] */
+<span class="lineNum">     758 </span>                :<span class="lineCov">      13621 :                     DEADLOCK_INFO *info = &amp;deadlockDetails[depth];</span>
+<span class="lineNum">     759 </span>                :            : 
+<span class="lineNum">     760 </span>                :<span class="lineCov">      13621 :                     info-&gt;locktag = lock-&gt;tag;</span>
+<span class="lineNum">     761 </span>                :<span class="lineCov">      13621 :                     info-&gt;lockmode = checkProc-&gt;waitLockMode;</span>
+<span class="lineNum">     762 </span>                :<span class="lineCov">      13621 :                     info-&gt;pid = checkProc-&gt;pid;</span>
+<span class="lineNum">     763 </span>                :            : 
+<span class="lineNum">     764 </span>                :            :                     /*
+<span class="lineNum">     765 </span>                :            :                      * Add this edge to the list of soft edges in the cycle
+<span class="lineNum">     766 </span>                :            :                      */
+<span class="lineNum">     767 </span>                :            :                     Assert(*nSoftEdges &lt; MaxBackends);
+<span class="lineNum">     768 </span>                :<span class="lineCov">      13621 :                     softEdges[*nSoftEdges].waiter = checkProcLeader;</span>
+<span class="lineNum">     769 </span>                :<span class="lineCov">      13621 :                     softEdges[*nSoftEdges].blocker = leader;</span>
+<span class="lineNum">     770 </span>                :<span class="lineCov">      13621 :                     softEdges[*nSoftEdges].lock = lock;</span>
+<span class="lineNum">     771 </span>                :<span class="lineCov">      13621 :                     (*nSoftEdges)++;</span>
+<span class="lineNum">     772 </span>                :<span class="lineCov">      13621 :                     return true;</span>
+<span class="lineNum">     773 </span>                :            :                 }
+<span class="lineNum">     774 </span>                :            :             }
+<span class="lineNum">     775 </span>                :            : 
+<span class="lineNum">     776 </span>                :<span class="lineCov">    1950713 :             proc = (PGPROC *) proc-&gt;links.next;</span>
+<span class="lineNum">     777 </span>                :            :         }
+<span class="lineNum">     778 </span>                :            :     }
+<span class="lineNum">     779 </span>                :            : 
+<span class="lineNum">     780 </span>                :            :     /*
+<span class="lineNum">     781 </span>                :            :      * No conflict detected here.
+<span class="lineNum">     782 </span>                :            :      */
+<span class="lineNum">     783 </span>                :<span class="lineCov">     761320 :     return false;</span>
+<span class="lineNum">     784 </span>                :            : }
+<span class="lineNum">     785 </span>                :            : 
+<span class="lineNum">     786 </span>                :            : 
+<span class="lineNum">     787 </span>                :            : /*
+<span class="lineNum">     788 </span>                :            :  * ExpandConstraints -- expand a list of constraints into a set of
+<span class="lineNum">     789 </span>                :            :  *      specific new orderings for affected wait queues
+<span class="lineNum">     790 </span>                :            :  *
+<span class="lineNum">     791 </span>                :            :  * Input is a list of soft edges to be reversed.  The output is a list
+<span class="lineNum">     792 </span>                :            :  * of nWaitOrders WAIT_ORDER structs in waitOrders[], with PGPROC array
+<span class="lineNum">     793 </span>                :            :  * workspace in waitOrderProcs[].
+<span class="lineNum">     794 </span>                :            :  *
+<span class="lineNum">     795 </span>                :            :  * Returns true if able to build an ordering that satisfies all the
+<span class="lineNum">     796 </span>                :            :  * constraints, false if not (there are contradictory constraints).
+<a name="797"><span class="lineNum">     797 </span>                :            :  */</a>
+<span class="lineNum">     798 </span>                :            : static bool
+<span class="lineNum">     799 </span>                :<span class="lineCov">      45848 : ExpandConstraints(EDGE *constraints,</span>
+<span class="lineNum">     800 </span>                :            :                   int nConstraints)
+<span class="lineNum">     801 </span>                :            : {
+<span class="lineNum">     802 </span>                :<span class="lineCov">      45848 :     int         nWaitOrderProcs = 0;</span>
+<span class="lineNum">     803 </span>                :            :     int         i,
+<span class="lineNum">     804 </span>                :            :                 j;
+<span class="lineNum">     805 </span>                :            : 
+<span class="lineNum">     806 </span>                :<span class="lineCov">      45848 :     nWaitOrders = 0;</span>
+<span class="lineNum">     807 </span>                :            : 
+<span class="lineNum">     808 </span>                :            :     /*
+<span class="lineNum">     809 </span>                :            :      * Scan constraint list backwards.  This is because the last-added
+<span class="lineNum">     810 </span>                :            :      * constraint is the only one that could fail, and so we want to test it
+<span class="lineNum">     811 </span>                :            :      * for inconsistency first.
+<span class="lineNum">     812 </span>                :            :      */
+<span class="lineNum">     813 </span>        [<span class="branchCov" title="Branch 0 was taken 29944 times"> + </span><span class="branchCov" title="Branch 1 was taken 45781 times"> + </span>]:<span class="lineCov">      75725 :     for (i = nConstraints; --i &gt;= 0;)</span>
+<span class="lineNum">     814 </span>                :            :     {
+<span class="lineNum">     815 </span>                :<span class="lineCov">      29944 :         LOCK       *lock = constraints[i].lock;</span>
+<span class="lineNum">     816 </span>                :            : 
+<span class="lineNum">     817 </span>                :            :         /* Did we already make a list for this lock? */
+<span class="lineNum">     818 </span>        [<span class="branchCov" title="Branch 0 was taken 23738 times"> + </span><span class="branchCov" title="Branch 1 was taken 12265 times"> + </span>]:<span class="lineCov">      36003 :         for (j = nWaitOrders; --j &gt;= 0;)</span>
+<span class="lineNum">     819 </span>                :            :         {
+<span class="lineNum">     820 </span>        [<span class="branchCov" title="Branch 0 was taken 17679 times"> + </span><span class="branchCov" title="Branch 1 was taken 6059 times"> + </span>]:<span class="lineCov">      23738 :             if (waitOrders[j].lock == lock)</span>
+<span class="lineNum">     821 </span>                :<span class="lineCov">      17679 :                 break;</span>
+<span class="lineNum">     822 </span>                :            :         }
+<span class="lineNum">     823 </span>        [<span class="branchCov" title="Branch 0 was taken 17679 times"> + </span><span class="branchCov" title="Branch 1 was taken 12265 times"> + </span>]:<span class="lineCov">      29944 :         if (j &gt;= 0)</span>
+<span class="lineNum">     824 </span>                :<span class="lineCov">      17679 :             continue;</span>
+<span class="lineNum">     825 </span>                :            :         /* No, so allocate a new list */
+<span class="lineNum">     826 </span>                :<span class="lineCov">      12265 :         waitOrders[nWaitOrders].lock = lock;</span>
+<span class="lineNum">     827 </span>                :<span class="lineCov">      12265 :         waitOrders[nWaitOrders].procs = waitOrderProcs + nWaitOrderProcs;</span>
+<span class="lineNum">     828 </span>                :<span class="lineCov">      12265 :         waitOrders[nWaitOrders].nProcs = lock-&gt;waitProcs.size;</span>
+<span class="lineNum">     829 </span>                :<span class="lineCov">      12265 :         nWaitOrderProcs += lock-&gt;waitProcs.size;</span>
+<span class="lineNum">     830 </span>                :            :         Assert(nWaitOrderProcs &lt;= MaxBackends);
+<span class="lineNum">     831 </span>                :            : 
+<span class="lineNum">     832 </span>                :            :         /*
+<span class="lineNum">     833 </span>                :            :          * Do the topo sort.  TopoSort need not examine constraints after this
+<span class="lineNum">     834 </span>                :            :          * one, since they must be for different locks.
+<span class="lineNum">     835 </span>                :            :          */
+<span class="lineNum">     836 </span>        [<span class="branchCov" title="Branch 1 was taken 67 times"> + </span><span class="branchCov" title="Branch 2 was taken 12198 times"> + </span>]:<span class="lineCov">      12265 :         if (!TopoSort(lock, constraints, i + 1,</span>
+<span class="lineNum">     837 </span>                :<span class="lineCov">      12265 :                       waitOrders[nWaitOrders].procs))</span>
+<span class="lineNum">     838 </span>                :<span class="lineCov">         67 :             return false;</span>
+<span class="lineNum">     839 </span>                :<span class="lineCov">      12198 :         nWaitOrders++;</span>
+<span class="lineNum">     840 </span>                :            :     }
+<span class="lineNum">     841 </span>                :<span class="lineCov">      45781 :     return true;</span>
+<span class="lineNum">     842 </span>                :            : }
+<span class="lineNum">     843 </span>                :            : 
+<span class="lineNum">     844 </span>                :            : 
+<span class="lineNum">     845 </span>                :            : /*
+<span class="lineNum">     846 </span>                :            :  * TopoSort -- topological sort of a wait queue
+<span class="lineNum">     847 </span>                :            :  *
+<span class="lineNum">     848 </span>                :            :  * Generate a re-ordering of a lock's wait queue that satisfies given
+<span class="lineNum">     849 </span>                :            :  * constraints about certain procs preceding others.  (Each such constraint
+<span class="lineNum">     850 </span>                :            :  * is a fact of a partial ordering.)  Minimize rearrangement of the queue
+<span class="lineNum">     851 </span>                :            :  * not needed to achieve the partial ordering.
+<span class="lineNum">     852 </span>                :            :  *
+<span class="lineNum">     853 </span>                :            :  * This is a lot simpler and slower than, for example, the topological sort
+<span class="lineNum">     854 </span>                :            :  * algorithm shown in Knuth's Volume 1.  However, Knuth's method doesn't
+<span class="lineNum">     855 </span>                :            :  * try to minimize the damage to the existing order.  In practice we are
+<span class="lineNum">     856 </span>                :            :  * not likely to be working with more than a few constraints, so the apparent
+<span class="lineNum">     857 </span>                :            :  * slowness of the algorithm won't really matter.
+<span class="lineNum">     858 </span>                :            :  *
+<span class="lineNum">     859 </span>                :            :  * The initial queue ordering is taken directly from the lock's wait queue.
+<span class="lineNum">     860 </span>                :            :  * The output is an array of PGPROC pointers, of length equal to the lock's
+<span class="lineNum">     861 </span>                :            :  * wait queue length (the caller is responsible for providing this space).
+<span class="lineNum">     862 </span>                :            :  * The partial order is specified by an array of EDGE structs.  Each EDGE
+<span class="lineNum">     863 </span>                :            :  * is one that we need to reverse, therefore the &quot;waiter&quot; must appear before
+<span class="lineNum">     864 </span>                :            :  * the &quot;blocker&quot; in the output array.  The EDGE array may well contain
+<span class="lineNum">     865 </span>                :            :  * edges associated with other locks; these should be ignored.
+<span class="lineNum">     866 </span>                :            :  *
+<span class="lineNum">     867 </span>                :            :  * Returns true if able to build an ordering that satisfies all the
+<span class="lineNum">     868 </span>                :            :  * constraints, false if not (there are contradictory constraints).
+<a name="869"><span class="lineNum">     869 </span>                :            :  */</a>
+<span class="lineNum">     870 </span>                :            : static bool
+<span class="lineNum">     871 </span>                :<span class="lineCov">      12265 : TopoSort(LOCK *lock,</span>
+<span class="lineNum">     872 </span>                :            :          EDGE *constraints,
+<span class="lineNum">     873 </span>                :            :          int nConstraints,
+<span class="lineNum">     874 </span>                :            :          PGPROC **ordering)     /* output argument */
+<span class="lineNum">     875 </span>                :            : {
+<span class="lineNum">     876 </span>                :<span class="lineCov">      12265 :     PROC_QUEUE *waitQueue = &amp;(lock-&gt;waitProcs);</span>
+<span class="lineNum">     877 </span>                :<span class="lineCov">      12265 :     int         queue_size = waitQueue-&gt;size;</span>
+<span class="lineNum">     878 </span>                :            :     PGPROC     *proc;
+<span class="lineNum">     879 </span>                :            :     int         i,
+<span class="lineNum">     880 </span>                :            :                 j,
+<span class="lineNum">     881 </span>                :            :                 jj,
+<span class="lineNum">     882 </span>                :            :                 k,
+<span class="lineNum">     883 </span>                :            :                 kk,
+<span class="lineNum">     884 </span>                :            :                 last;
+<span class="lineNum">     885 </span>                :            : 
+<span class="lineNum">     886 </span>                :            :     /* First, fill topoProcs[] array with the procs in their current order */
+<span class="lineNum">     887 </span>                :<span class="lineCov">      12265 :     proc = (PGPROC *) waitQueue-&gt;links.next;</span>
+<span class="lineNum">     888 </span>        [<span class="branchCov" title="Branch 0 was taken 167747 times"> + </span><span class="branchCov" title="Branch 1 was taken 12265 times"> + </span>]:<span class="lineCov">     180012 :     for (i = 0; i &lt; queue_size; i++)</span>
+<span class="lineNum">     889 </span>                :            :     {
+<span class="lineNum">     890 </span>                :<span class="lineCov">     167747 :         topoProcs[i] = proc;</span>
+<span class="lineNum">     891 </span>                :<span class="lineCov">     167747 :         proc = (PGPROC *) proc-&gt;links.next;</span>
+<span class="lineNum">     892 </span>                :            :     }
+<span class="lineNum">     893 </span>                :            : 
+<span class="lineNum">     894 </span>                :            :     /*
+<span class="lineNum">     895 </span>                :            :      * Scan the constraints, and for each proc in the array, generate a count
+<span class="lineNum">     896 </span>                :            :      * of the number of constraints that say it must be before something else,
+<span class="lineNum">     897 </span>                :            :      * plus a list of the constraints that say it must be after something
+<span class="lineNum">     898 </span>                :            :      * else. The count for the j'th proc is stored in beforeConstraints[j],
+<span class="lineNum">     899 </span>                :            :      * and the head of its list in afterConstraints[j].  Each constraint
+<span class="lineNum">     900 </span>                :            :      * stores its list link in constraints[i].link (note any constraint will
+<span class="lineNum">     901 </span>                :            :      * be in just one list). The array index for the before-proc of the i'th
+<span class="lineNum">     902 </span>                :            :      * constraint is remembered in constraints[i].pred.
+<span class="lineNum">     903 </span>                :            :      *
+<span class="lineNum">     904 </span>                :            :      * Note that it's not necessarily the case that every constraint affects
+<span class="lineNum">     905 </span>                :            :      * this particular wait queue.  Prior to group locking, a process could be
+<span class="lineNum">     906 </span>                :            :      * waiting for at most one lock.  But a lock group can be waiting for
+<span class="lineNum">     907 </span>                :            :      * zero, one, or multiple locks.  Since topoProcs[] is an array of the
+<span class="lineNum">     908 </span>                :            :      * processes actually waiting, while constraints[] is an array of group
+<span class="lineNum">     909 </span>                :            :      * leaders, we've got to scan through topoProcs[] for each constraint,
+<span class="lineNum">     910 </span>                :            :      * checking whether both a waiter and a blocker for that group are
+<span class="lineNum">     911 </span>                :            :      * present.  If so, the constraint is relevant to this wait queue; if not,
+<span class="lineNum">     912 </span>                :            :      * it isn't.
+<span class="lineNum">     913 </span>                :            :      */
+<span class="lineNum">     914 </span>[<span class="branchCov" title="Branch 0 was taken 12265 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchCov" title="Branch 2 was taken 6896 times"> + </span><span class="branchCov" title="Branch 3 was taken 5369 times"> + </span>]:<span class="lineCov">      61349 :     MemSet(beforeConstraints, 0, queue_size * sizeof(int));</span>
+<span class="lineNum">         </span>[<span class="branchCov" title="Branch 4 was taken 6896 times"> + </span><span class="branchNoCov" title="Branch 5 was not taken"> - </span>][<span class="branchCov" title="Branch 6 was taken 6896 times"> + </span><span class="branchNoCov" title="Branch 7 was not taken"> - </span>]
+<span class="lineNum">         </span>        [<span class="branchCov" title="Branch 8 was taken 49084 times"> + </span><span class="branchCov" title="Branch 9 was taken 6896 times"> + </span>]
+<span class="lineNum">     915 </span>[<span class="branchCov" title="Branch 0 was taken 12265 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>][<span class="branchCov" title="Branch 2 was taken 6896 times"> + </span><span class="branchCov" title="Branch 3 was taken 5369 times"> + </span>]:<span class="lineCov">      61349 :     MemSet(afterConstraints, 0, queue_size * sizeof(int));</span>
+<span class="lineNum">         </span>[<span class="branchCov" title="Branch 4 was taken 6896 times"> + </span><span class="branchNoCov" title="Branch 5 was not taken"> - </span>][<span class="branchCov" title="Branch 6 was taken 6896 times"> + </span><span class="branchNoCov" title="Branch 7 was not taken"> - </span>]
+<span class="lineNum">         </span>        [<span class="branchCov" title="Branch 8 was taken 49084 times"> + </span><span class="branchCov" title="Branch 9 was taken 6896 times"> + </span>]
+<span class="lineNum">     916 </span>        [<span class="branchCov" title="Branch 0 was taken 40408 times"> + </span><span class="branchCov" title="Branch 1 was taken 12265 times"> + </span>]:<span class="lineCov">      52673 :     for (i = 0; i &lt; nConstraints; i++)</span>
+<span class="lineNum">     917 </span>                :            :     {
+<span class="lineNum">     918 </span>                :            :         /*
+<span class="lineNum">     919 </span>                :            :          * Find a representative process that is on the lock queue and part of
+<span class="lineNum">     920 </span>                :            :          * the waiting lock group.  This may or may not be the leader, which
+<span class="lineNum">     921 </span>                :            :          * may or may not be waiting at all.  If there are any other processes
+<span class="lineNum">     922 </span>                :            :          * in the same lock group on the queue, set their number of
+<span class="lineNum">     923 </span>                :            :          * beforeConstraints to -1 to indicate that they should be emitted
+<span class="lineNum">     924 </span>                :            :          * with their groupmates rather than considered separately.
+<span class="lineNum">     925 </span>                :            :          *
+<span class="lineNum">     926 </span>                :            :          * In this loop and the similar one just below, it's critical that we
+<span class="lineNum">     927 </span>                :            :          * consistently select the same representative member of any one lock
+<span class="lineNum">     928 </span>                :            :          * group, so that all the constraints are associated with the same
+<span class="lineNum">     929 </span>                :            :          * proc, and the -1's are only associated with not-representative
+<span class="lineNum">     930 </span>                :            :          * members.  We select the last one in the topoProcs array.
+<span class="lineNum">     931 </span>                :            :          */
+<span class="lineNum">     932 </span>                :<span class="lineCov">      40408 :         proc = constraints[i].waiter;</span>
+<span class="lineNum">     933 </span>                :            :         Assert(proc != NULL);
+<span class="lineNum">     934 </span>                :<span class="lineCov">      40408 :         jj = -1;</span>
+<span class="lineNum">     935 </span>        [<span class="branchCov" title="Branch 0 was taken 632391 times"> + </span><span class="branchCov" title="Branch 1 was taken 40408 times"> + </span>]:<span class="lineCov">     672799 :         for (j = queue_size; --j &gt;= 0;)</span>
+<span class="lineNum">     936 </span>                :            :         {
+<span class="lineNum">     937 </span>                :<span class="lineCov">     632391 :             PGPROC     *waiter = topoProcs[j];</span>
+<span class="lineNum">     938 </span>                :            : 
+<span class="lineNum">     939 </span>[<span class="branchCov" title="Branch 0 was taken 602147 times"> + </span><span class="branchCov" title="Branch 1 was taken 30244 times"> + </span>][<span class="branchNoCov" title="Branch 2 was not taken"> - </span><span class="branchCov" title="Branch 3 was taken 602147 times"> + </span>]:<span class="lineCov">     632391 :             if (waiter == proc || waiter-&gt;lockGroupLeader == proc)</span>
+<span class="lineNum">     940 </span>                :            :             {
+<span class="lineNum">     941 </span>                :            :                 Assert(waiter-&gt;waitLock == lock);
+<span class="lineNum">     942 </span>        [<span class="branchCov" title="Branch 0 was taken 30244 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">      30244 :                 if (jj == -1)</span>
+<span class="lineNum">     943 </span>                :<span class="lineCov">      30244 :                     jj = j;</span>
+<span class="lineNum">     944 </span>                :            :                 else
+<span class="lineNum">     945 </span>                :            :                 {
+<span class="lineNum">     946 </span>                :            :                     Assert(beforeConstraints[j] &lt;= 0);
+<span class="lineNum">     947 </span>                :<span class="lineNoCov">          0 :                     beforeConstraints[j] = -1;</span>
+<span class="lineNum">     948 </span>                :            :                 }
+<span class="lineNum">     949 </span>                :            :             }
+<span class="lineNum">     950 </span>                :            :         }
+<span class="lineNum">     951 </span>                :            : 
+<span class="lineNum">     952 </span>                :            :         /* If no matching waiter, constraint is not relevant to this lock. */
+<span class="lineNum">     953 </span>        [<span class="branchCov" title="Branch 0 was taken 10164 times"> + </span><span class="branchCov" title="Branch 1 was taken 30244 times"> + </span>]:<span class="lineCov">      40408 :         if (jj &lt; 0)</span>
+<span class="lineNum">     954 </span>                :<span class="lineCov">      10164 :             continue;</span>
+<span class="lineNum">     955 </span>                :            : 
+<span class="lineNum">     956 </span>                :            :         /*
+<span class="lineNum">     957 </span>                :            :          * Similarly, find a representative process that is on the lock queue
+<span class="lineNum">     958 </span>                :            :          * and waiting for the blocking lock group.  Again, this could be the
+<span class="lineNum">     959 </span>                :            :          * leader but does not need to be.
+<span class="lineNum">     960 </span>                :            :          */
+<span class="lineNum">     961 </span>                :<span class="lineCov">      30244 :         proc = constraints[i].blocker;</span>
+<span class="lineNum">     962 </span>                :            :         Assert(proc != NULL);
+<span class="lineNum">     963 </span>                :<span class="lineCov">      30244 :         kk = -1;</span>
+<span class="lineNum">     964 </span>        [<span class="branchCov" title="Branch 0 was taken 507281 times"> + </span><span class="branchCov" title="Branch 1 was taken 30244 times"> + </span>]:<span class="lineCov">     537525 :         for (k = queue_size; --k &gt;= 0;)</span>
+<span class="lineNum">     965 </span>                :            :         {
+<span class="lineNum">     966 </span>                :<span class="lineCov">     507281 :             PGPROC     *blocker = topoProcs[k];</span>
+<span class="lineNum">     967 </span>                :            : 
+<span class="lineNum">     968 </span>[<span class="branchCov" title="Branch 0 was taken 477037 times"> + </span><span class="branchCov" title="Branch 1 was taken 30244 times"> + </span>][<span class="branchNoCov" title="Branch 2 was not taken"> - </span><span class="branchCov" title="Branch 3 was taken 477037 times"> + </span>]:<span class="lineCov">     507281 :             if (blocker == proc || blocker-&gt;lockGroupLeader == proc)</span>
+<span class="lineNum">     969 </span>                :            :             {
+<span class="lineNum">     970 </span>                :            :                 Assert(blocker-&gt;waitLock == lock);
+<span class="lineNum">     971 </span>        [<span class="branchCov" title="Branch 0 was taken 30244 times"> + </span><span class="branchNoCov" title="Branch 1 was not taken"> - </span>]:<span class="lineCov">      30244 :                 if (kk == -1)</span>
+<span class="lineNum">     972 </span>                :<span class="lineCov">      30244 :                     kk = k;</span>
+<span class="lineNum">     973 </span>                :            :                 else
+<span class="lineNum">     974 </span>                :            :                 {
+<span class="lineNum">     975 </span>                :            :                     Assert(beforeConstraints[k] &lt;= 0);
+<span class="lineNum">     976 </span>                :<span class="lineNoCov">          0 :                     beforeConstraints[k] = -1;</span>
+<span class="lineNum">     977 </span>                :            :                 }
+<span class="lineNum">     978 </span>                :            :             }
+<span class="lineNum">     979 </span>                :            :         }
+<span class="lineNum">     980 </span>                :            : 
+<span class="lineNum">     981 </span>                :            :         /* If no matching blocker, constraint is not relevant to this lock. */
+<span class="lineNum">     982 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 30244 times"> + </span>]:<span class="lineCov">      30244 :         if (kk &lt; 0)</span>
+<span class="lineNum">     983 </span>                :<span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     984 </span>                :            : 
+<span class="lineNum">     985 </span>                :            :         Assert(beforeConstraints[jj] &gt;= 0);
+<span class="lineNum">     986 </span>                :<span class="lineCov">      30244 :         beforeConstraints[jj]++;    /* waiter must come before */</span>
+<span class="lineNum">     987 </span>                :            :         /* add this constraint to list of after-constraints for blocker */
+<span class="lineNum">     988 </span>                :<span class="lineCov">      30244 :         constraints[i].pred = jj;</span>
+<span class="lineNum">     989 </span>                :<span class="lineCov">      30244 :         constraints[i].link = afterConstraints[kk];</span>
+<span class="lineNum">     990 </span>                :<span class="lineCov">      30244 :         afterConstraints[kk] = i + 1;</span>
+<span class="lineNum">     991 </span>                :            :     }
+<span class="lineNum">     992 </span>                :            : 
+<span class="lineNum">     993 </span>                :            :     /*--------------------
+<span class="lineNum">     994 </span>                :            :      * Now scan the topoProcs array backwards.  At each step, output the
+<span class="lineNum">     995 </span>                :            :      * last proc that has no remaining before-constraints plus any other
+<span class="lineNum">     996 </span>                :            :      * members of the same lock group; then decrease the beforeConstraints
+<span class="lineNum">     997 </span>                :            :      * count of each of the procs it was constrained against.
+<span class="lineNum">     998 </span>                :            :      * i = index of ordering[] entry we want to output this time
+<span class="lineNum">     999 </span>                :            :      * j = search index for topoProcs[]
+<span class="lineNum">    1000 </span>                :            :      * k = temp for scanning constraint list for proc j
+<span class="lineNum">    1001 </span>                :            :      * last = last non-null index in topoProcs (avoid redundant searches)
+<span class="lineNum">    1002 </span>                :            :      *--------------------
+<span class="lineNum">    1003 </span>                :            :      */
+<span class="lineNum">    1004 </span>                :<span class="lineCov">      12265 :     last = queue_size - 1;</span>
+<span class="lineNum">    1005 </span>        [<span class="branchCov" title="Branch 0 was taken 167589 times"> + </span><span class="branchCov" title="Branch 1 was taken 12198 times"> + </span>]:<span class="lineCov">     179787 :     for (i = queue_size - 1; i &gt;= 0;)</span>
+<span class="lineNum">    1006 </span>                :            :     {
+<span class="lineNum">    1007 </span>                :            :         int         c;
+<span class="lineNum">    1008 </span>                :<span class="lineCov">     167589 :         int         nmatches = 0;</span>
+<span class="lineNum">    1009 </span>                :            : 
+<span class="lineNum">    1010 </span>                :            :         /* Find next candidate to output */
+<span class="lineNum">    1011 </span>        [<span class="branchCov" title="Branch 0 was taken 101714 times"> + </span><span class="branchCov" title="Branch 1 was taken 167589 times"> + </span>]:<span class="lineCov">     269303 :         while (topoProcs[last] == NULL)</span>
+<span class="lineNum">    1012 </span>                :<span class="lineCov">     101714 :             last--;</span>
+<span class="lineNum">    1013 </span>        [<span class="branchCov" title="Branch 0 was taken 859486 times"> + </span><span class="branchCov" title="Branch 1 was taken 67 times"> + </span>]:<span class="lineCov">     859553 :         for (j = last; j &gt;= 0; j--)</span>
+<span class="lineNum">    1014 </span>                :            :         {
+<span class="lineNum">    1015 </span>[<span class="branchCov" title="Branch 0 was taken 348116 times"> + </span><span class="branchCov" title="Branch 1 was taken 511370 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 167522 times"> + </span><span class="branchCov" title="Branch 3 was taken 180594 times"> + </span>]:<span class="lineCov">     859486 :             if (topoProcs[j] != NULL &amp;&amp; beforeConstraints[j] == 0)</span>
+<span class="lineNum">    1016 </span>                :<span class="lineCov">     167522 :                 break;</span>
+<span class="lineNum">    1017 </span>                :            :         }
+<span class="lineNum">    1018 </span>                :            : 
+<span class="lineNum">    1019 </span>                :            :         /* If no available candidate, topological sort fails */
+<span class="lineNum">    1020 </span>        [<span class="branchCov" title="Branch 0 was taken 67 times"> + </span><span class="branchCov" title="Branch 1 was taken 167522 times"> + </span>]:<span class="lineCov">     167589 :         if (j &lt; 0)</span>
+<span class="lineNum">    1021 </span>                :<span class="lineCov">         67 :             return false;</span>
+<span class="lineNum">    1022 </span>                :            : 
+<span class="lineNum">    1023 </span>                :            :         /*
+<span class="lineNum">    1024 </span>                :            :          * Output everything in the lock group.  There's no point in
+<span class="lineNum">    1025 </span>                :            :          * outputting an ordering where members of the same lock group are not
+<span class="lineNum">    1026 </span>                :            :          * consecutive on the wait queue: if some other waiter is between two
+<span class="lineNum">    1027 </span>                :            :          * requests that belong to the same group, then either it conflicts
+<span class="lineNum">    1028 </span>                :            :          * with both of them and is certainly not a solution; or it conflicts
+<span class="lineNum">    1029 </span>                :            :          * with at most one of them and is thus isomorphic to an ordering
+<span class="lineNum">    1030 </span>                :            :          * where the group members are consecutive.
+<span class="lineNum">    1031 </span>                :            :          */
+<span class="lineNum">    1032 </span>                :<span class="lineCov">     167522 :         proc = topoProcs[j];</span>
+<span class="lineNum">    1033 </span>        [<span class="branchNoCov" title="Branch 0 was not taken"> - </span><span class="branchCov" title="Branch 1 was taken 167522 times"> + </span>]:<span class="lineCov">     167522 :         if (proc-&gt;lockGroupLeader != NULL)</span>
+<span class="lineNum">    1034 </span>                :<span class="lineNoCov">          0 :             proc = proc-&gt;lockGroupLeader;</span>
+<span class="lineNum">    1035 </span>                :            :         Assert(proc != NULL);
+<span class="lineNum">    1036 </span>        [<span class="branchCov" title="Branch 0 was taken 2382163 times"> + </span><span class="branchCov" title="Branch 1 was taken 167522 times"> + </span>]:<span class="lineCov">    2549685 :         for (c = 0; c &lt;= last; ++c)</span>
+<span class="lineNum">    1037 </span>                :            :         {
+<span class="lineNum">    1038 </span>[<span class="branchCov" title="Branch 0 was taken 2214641 times"> + </span><span class="branchCov" title="Branch 1 was taken 167522 times"> + </span>][<span class="branchCov" title="Branch 2 was taken 1523643 times"> + </span><span class="branchCov" title="Branch 3 was taken 690998 times"> + </span>]:<span class="lineCov">    2382163 :             if (topoProcs[c] == proc || (topoProcs[c] != NULL &amp;&amp;</span>
+<span class="lineNum">         </span>        [<span class="branchNoCov" title="Branch 4 was not taken"> - </span><span class="branchCov" title="Branch 5 was taken 1523643 times"> + </span>]
+<span class="lineNum">    1039 </span>                :<span class="lineCov">    1523643 :                                          topoProcs[c]-&gt;lockGroupLeader == proc))</span>
+<span class="lineNum">    1040 </span>                :            :             {
+<span class="lineNum">    1041 </span>                :<span class="lineCov">     167522 :                 ordering[i - nmatches] = topoProcs[c];</span>
+<span class="lineNum">    1042 </span>                :<span class="lineCov">     167522 :                 topoProcs[c] = NULL;</span>
+<span class="lineNum">    1043 </span>                :<span class="lineCov">     167522 :                 ++nmatches;</span>
+<span class="lineNum">    1044 </span>                :            :             }
+<span class="lineNum">    1045 </span>                :            :         }
+<span class="lineNum">    1046 </span>                :            :         Assert(nmatches &gt; 0);
+<span class="lineNum">    1047 </span>                :<span class="lineCov">     167522 :         i -= nmatches;</span>
+<span class="lineNum">    1048 </span>                :            : 
+<span class="lineNum">    1049 </span>                :            :         /* Update beforeConstraints counts of its predecessors */
+<span class="lineNum">    1050 </span>        [<span class="branchCov" title="Branch 0 was taken 30019 times"> + </span><span class="branchCov" title="Branch 1 was taken 167522 times"> + </span>]:<span class="lineCov">     197541 :         for (k = afterConstraints[j]; k &gt; 0; k = constraints[k - 1].link)</span>
+<span class="lineNum">    1051 </span>                :<span class="lineCov">      30019 :             beforeConstraints[constraints[k - 1].pred]--;</span>
+<span class="lineNum">    1052 </span>                :            :     }
+<span class="lineNum">    1053 </span>                :            : 
+<span class="lineNum">    1054 </span>                :            :     /* Done */
+<span class="lineNum">    1055 </span>                :<span class="lineCov">      12198 :     return true;</span>
+<span class="lineNum">    1056 </span>                :            : }
+<span class="lineNum">    1057 </span>                :            : 
+<span class="lineNum">    1058 </span>                :            : #ifdef DEBUG_DEADLOCK
+<span class="lineNum">    1059 </span>                :            : static void
+<span class="lineNum">    1060 </span>                :            : PrintLockQueue(LOCK *lock, const char *info)
+<span class="lineNum">    1061 </span>                :            : {
+<span class="lineNum">    1062 </span>                :            :     PROC_QUEUE *waitQueue = &amp;(lock-&gt;waitProcs);
+<span class="lineNum">    1063 </span>                :            :     int         queue_size = waitQueue-&gt;size;
+<span class="lineNum">    1064 </span>                :            :     PGPROC     *proc;
+<span class="lineNum">    1065 </span>                :            :     int         i;
+<span class="lineNum">    1066 </span>                :            : 
+<span class="lineNum">    1067 </span>                :            :     printf(&quot;%s lock %p queue &quot;, info, lock);
+<span class="lineNum">    1068 </span>                :            :     proc = (PGPROC *) waitQueue-&gt;links.next;
+<span class="lineNum">    1069 </span>                :            :     for (i = 0; i &lt; queue_size; i++)
+<span class="lineNum">    1070 </span>                :            :     {
+<span class="lineNum">    1071 </span>                :            :         printf(&quot; %d&quot;, proc-&gt;pid);
+<span class="lineNum">    1072 </span>                :            :         proc = (PGPROC *) proc-&gt;links.next;
+<span class="lineNum">    1073 </span>                :            :     }
+<span class="lineNum">    1074 </span>                :            :     printf(&quot;\n&quot;);
+<span class="lineNum">    1075 </span>                :            :     fflush(stdout);
+<span class="lineNum">    1076 </span>                :            : }
+<span class="lineNum">    1077 </span>                :            : #endif
+<span class="lineNum">    1078 </span>                :            : 
+<span class="lineNum">    1079 </span>                :            : /*
+<span class="lineNum">    1080 </span>                :            :  * Report a detected deadlock, with available details.
+<a name="1081"><span class="lineNum">    1081 </span>                :            :  */</a>
+<span class="lineNum">    1082 </span>                :            : void
+<span class="lineNum">    1083 </span>                :<span class="lineCov">       6382 : DeadLockReport(void)</span>
+<span class="lineNum">    1084 </span>                :            : {
+<span class="lineNum">    1085 </span>                :            :     StringInfoData clientbuf;   /* errdetail for client */
+<span class="lineNum">    1086 </span>                :            :     StringInfoData logbuf;      /* errdetail for server log */
+<span class="lineNum">    1087 </span>                :            :     StringInfoData locktagbuf;
+<span class="lineNum">    1088 </span>                :            :     int         i;
+<span class="lineNum">    1089 </span>                :            : 
+<span class="lineNum">    1090 </span>                :<span class="lineCov">       6382 :     initStringInfo(&amp;clientbuf);</span>
+<span class="lineNum">    1091 </span>                :<span class="lineCov">       6382 :     initStringInfo(&amp;logbuf);</span>
+<span class="lineNum">    1092 </span>                :<span class="lineCov">       6382 :     initStringInfo(&amp;locktagbuf);</span>
+<span class="lineNum">    1093 </span>                :            : 
+<span class="lineNum">    1094 </span>                :            :     /* Generate the &quot;waits for&quot; lines sent to the client */
+<span class="lineNum">    1095 </span>        [<span class="branchCov" title="Branch 0 was taken 18890 times"> + </span><span class="branchCov" title="Branch 1 was taken 6382 times"> + </span>]:<span class="lineCov">      25272 :     for (i = 0; i &lt; nDeadlockDetails; i++)</span>
+<span class="lineNum">    1096 </span>                :            :     {
+<span class="lineNum">    1097 </span>                :<span class="lineCov">      18890 :         DEADLOCK_INFO *info = &amp;deadlockDetails[i];</span>
+<span class="lineNum">    1098 </span>                :            :         int         nextpid;
+<span class="lineNum">    1099 </span>                :            : 
+<span class="lineNum">    1100 </span>                :            :         /* The last proc waits for the first one... */
+<span class="lineNum">    1101 </span>        [<span class="branchCov" title="Branch 0 was taken 12508 times"> + </span><span class="branchCov" title="Branch 1 was taken 6382 times"> + </span>]:<span class="lineCov">      18890 :         if (i &lt; nDeadlockDetails - 1)</span>
+<span class="lineNum">    1102 </span>                :<span class="lineCov">      12508 :             nextpid = info[1].pid;</span>
+<span class="lineNum">    1103 </span>                :            :         else
+<span class="lineNum">    1104 </span>                :<span class="lineCov">       6382 :             nextpid = deadlockDetails[0].pid;</span>
+<span class="lineNum">    1105 </span>                :            : 
+<span class="lineNum">    1106 </span>                :            :         /* reset locktagbuf to hold next object description */
+<span class="lineNum">    1107 </span>                :<span class="lineCov">      18890 :         resetStringInfo(&amp;locktagbuf);</span>
+<span class="lineNum">    1108 </span>                :            : 
+<span class="lineNum">    1109 </span>                :<span class="lineCov">      18890 :         DescribeLockTag(&amp;locktagbuf, &amp;info-&gt;locktag);</span>
+<span class="lineNum">    1110 </span>                :            : 
+<span class="lineNum">    1111 </span>        [<span class="branchCov" title="Branch 0 was taken 12508 times"> + </span><span class="branchCov" title="Branch 1 was taken 6382 times"> + </span>]:<span class="lineCov">      18890 :         if (i &gt; 0)</span>
+<span class="lineNum">    1112 </span>                :<span class="lineCov">      12508 :             appendStringInfoChar(&amp;clientbuf, '\n');</span>
+<span class="lineNum">    1113 </span>                :            : 
+<span class="lineNum">    1114 </span>                :<span class="lineCov">      18890 :         appendStringInfo(&amp;clientbuf,</span>
+<span class="lineNum">    1115 </span>                :            :                          _(&quot;Process %d waits for %s on %s; blocked by process %d.&quot;),
+<span class="lineNum">    1116 </span>                :            :                          info-&gt;pid,
+<span class="lineNum">    1117 </span>                :<span class="lineCov">      18890 :                          GetLockmodeName(info-&gt;locktag.locktag_lockmethodid,</span>
+<span class="lineNum">    1118 </span>                :            :                                          info-&gt;lockmode),
+<span class="lineNum">    1119 </span>                :            :                          locktagbuf.data,
+<span class="lineNum">    1120 </span>                :            :                          nextpid);
+<span class="lineNum">    1121 </span>                :            :     }
+<span class="lineNum">    1122 </span>                :            : 
+<span class="lineNum">    1123 </span>                :            :     /* Duplicate all the above for the server ... */
+<span class="lineNum">    1124 </span>                :<span class="lineCov">       6382 :     appendStringInfoString(&amp;logbuf, clientbuf.data);</span>
+<span class="lineNum">    1125 </span>                :            : 
+<span class="lineNum">    1126 </span>                :            :     /* ... and add info about query strings */
+<span class="lineNum">    1127 </span>        [<span class="branchCov" title="Branch 0 was taken 18890 times"> + </span><span class="branchCov" title="Branch 1 was taken 6382 times"> + </span>]:<span class="lineCov">      25272 :     for (i = 0; i &lt; nDeadlockDetails; i++)</span>
+<span class="lineNum">    1128 </span>                :            :     {
+<span class="lineNum">    1129 </span>                :<span class="lineCov">      18890 :         DEADLOCK_INFO *info = &amp;deadlockDetails[i];</span>
+<span class="lineNum">    1130 </span>                :            : 
+<span class="lineNum">    1131 </span>                :<span class="lineCov">      18890 :         appendStringInfoChar(&amp;logbuf, '\n');</span>
+<span class="lineNum">    1132 </span>                :            : 
+<span class="lineNum">    1133 </span>                :<span class="lineCov">      18890 :         appendStringInfo(&amp;logbuf,</span>
+<span class="lineNum">    1134 </span>                :            :                          _(&quot;Process %d: %s&quot;),
+<span class="lineNum">    1135 </span>                :            :                          info-&gt;pid,
+<span class="lineNum">    1136 </span>                :            :                          pgstat_get_backend_current_activity(info-&gt;pid, false));
+<span class="lineNum">    1137 </span>                :            :     }
+<span class="lineNum">    1138 </span>                :            : 
+<span class="lineNum">    1139 </span>                :<span class="lineCov">       6382 :     pgstat_report_deadlock();</span>
+<span class="lineNum">    1140 </span>                :            : 
+<span class="lineNum">    1141 </span>        [<span class="branchCov" title="Branch 1 was taken 6382 times"> + </span><span class="branchNoCov" title="Branch 2 was not taken"> - </span>]:<span class="lineCov">       6382 :     ereport(ERROR,</span>
+<span class="lineNum">    1142 </span>                :            :             (errcode(ERRCODE_T_R_DEADLOCK_DETECTED),
+<span class="lineNum">    1143 </span>                :            :              errmsg(&quot;deadlock detected&quot;),
+<span class="lineNum">    1144 </span>                :            :              errdetail_internal(&quot;%s&quot;, clientbuf.data),
+<span class="lineNum">    1145 </span>                :            :              errdetail_log(&quot;%s&quot;, logbuf.data),
+<span class="lineNum">    1146 </span>                :            :              errhint(&quot;See server log for query details.&quot;)));
+<span class="lineNum">    1147 </span>                :            : }
+<span class="lineNum">    1148 </span>                :            : 
+<span class="lineNum">    1149 </span>                :            : /*
+<span class="lineNum">    1150 </span>                :            :  * RememberSimpleDeadLock: set up info for DeadLockReport when ProcSleep
+<span class="lineNum">    1151 </span>                :            :  * detects a trivial (two-way) deadlock.  proc1 wants to block for lockmode
+<span class="lineNum">    1152 </span>                :            :  * on lock, but proc2 is already waiting and would be blocked by proc1.
+<a name="1153"><span class="lineNum">    1153 </span>                :            :  */</a>
+<span class="lineNum">    1154 </span>                :            : void
+<span class="lineNum">    1155 </span>                :<span class="lineCov">         36 : RememberSimpleDeadLock(PGPROC *proc1,</span>
+<span class="lineNum">    1156 </span>                :            :                        LOCKMODE lockmode,
+<span class="lineNum">    1157 </span>                :            :                        LOCK *lock,
+<span class="lineNum">    1158 </span>                :            :                        PGPROC *proc2)
+<span class="lineNum">    1159 </span>                :            : {
+<span class="lineNum">    1160 </span>                :<span class="lineCov">         36 :     DEADLOCK_INFO *info = &amp;deadlockDetails[0];</span>
+<span class="lineNum">    1161 </span>                :            : 
+<span class="lineNum">    1162 </span>                :<span class="lineCov">         36 :     info-&gt;locktag = lock-&gt;tag;</span>
+<span class="lineNum">    1163 </span>                :<span class="lineCov">         36 :     info-&gt;lockmode = lockmode;</span>
+<span class="lineNum">    1164 </span>                :<span class="lineCov">         36 :     info-&gt;pid = proc1-&gt;pid;</span>
+<span class="lineNum">    1165 </span>                :<span class="lineCov">         36 :     info++;</span>
+<span class="lineNum">    1166 </span>                :<span class="lineCov">         36 :     info-&gt;locktag = proc2-&gt;waitLock-&gt;tag;</span>
+<span class="lineNum">    1167 </span>                :<span class="lineCov">         36 :     info-&gt;lockmode = proc2-&gt;waitLockMode;</span>
+<span class="lineNum">    1168 </span>                :<span class="lineCov">         36 :     info-&gt;pid = proc2-&gt;pid;</span>
+<span class="lineNum">    1169 </span>                :<span class="lineCov">         36 :     nDeadlockDetails = 2;</span>
+<span class="lineNum">    1170 </span>                :<span class="lineCov">         36 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

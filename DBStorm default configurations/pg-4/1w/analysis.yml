@@ -1,0 +1,38 @@
+#the period of calculate the space overhead
+periodFootprintStatistic: 5000
+
+#size of private buffer(LB)
+privateBufferSize: 10000
+
+#threshold of cleaning version chain
+versionChainPurgeLength: 100
+
+#threshold of cleaning dependency graph(DG)
+graphPurgeSize: 1000
+
+#track dependency in DG?
+trackWW: false
+trackWR: false
+trackRW: true
+
+#enable GC for Analysis Window(AW)、History Version(HV)、DG
+
+
+
+
+
+launchGC: true
+
+#using virtual columns on HV of non-pk data
+
+
+
+
+
+
+
+
+takeVC: true
+
+#use MS to calculate original data
+calculateInitialData: true

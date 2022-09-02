@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<schema>
+    <number_of_table>
+        <seed>
+            <begin>5</begin>
+            <end>10</end>
+            <distribution>Zipf,1.2</distribution>
+        </seed>
+    </number_of_table>
+    <table>
+        <primary_key>
+            <length_of_primary_key>
+                <seed>
+                    <begin>1</begin>
+                    <end>2</end>
+                    <distribution>Uniform</distribution>
+                </seed>
+            </length_of_primary_key>
+            0: int 1: varchar
+            <type_of_primary_key>
+              <type>0,1</type>
+				<probability>50,50</probability>
+            </type_of_primary_key>
+            <auto_increase>
+                <type>0,1</type>
+                <probability>50,50</probability>  
+            </auto_increase>
+        </primary_key>
+
+        <attribute>
+            <group>
+                <number_of_group>
+                    <seed>
+                        <begin>1</begin>
+                        <end>10</end>
+                        <distribution>Uniform</distribution>
+                    </seed>
+                </number_of_group>
+                <number_of_attribute>
+                    <seed>
+                        <begin>1</begin>
+                        <end>3</end>
+                        <distribution>Normal</distribution>
+                    </seed>
+                </number_of_attribute>
+            </group>
+            <type_of_attribute>
+                <!-- 0:int 1:varchar 2:double 3:decimal 4:blob 5:timestamp 6:bool-->
+                <!-- the sum of probability must be 100  -->
+                <type>0,1,2,3</type>
+                <probability>40,40,10,10</probability>
+            </type_of_attribute>
+        </attribute>
+
+        <foreign_key>
+            <number_of_common_foreign_key>
+                <seed>
+                    <begin>1</begin>
+                    <end>3</end>
+                    <distribution>Uniform</distribution>
+                </seed>
+            </number_of_common_foreign_key>
+
+            <!-- just in composite primary key -->
+            <proportion_prefix_foreign_key>
+                <seed>
+                    <begin>0</begin>
+                    <end>1</end>
+                    <distribution>Uniform</distribution>
+                </seed>
+            </proportion_prefix_foreign_key>
+
+            <!-- for primary foreign key -->
+            <length_of_primarykey2foreign_key>
+                <seed>
+                    <begin>1</begin>
+                    <end>2</end>
+                    <distribution>Uniform</distribution>
+                </seed>
+            </length_of_primarykey2foreign_key>
+            
+            <reference_table>
+                <seed>
+                    <distribution>Uniform</distribution>
+                </seed>
+            </reference_table>
+        </foreign_key>
+
+        <index>
+            <!-- set secondary index? 0: set 1+: not-->
+            <secondary_index>
+                <seed>
+                    <begin>0</begin>
+                    <end>10</end>
+                    <distribution>Uniform</distribution>
+                </seed>
+            </secondary_index>
+        </index>
+
+        <number_of_record>
+            <seed>
+                <begin>20</begin>
+                <end>21</end>
+                <distribution>Uniform</distribution>
+            </seed>
+        </number_of_record>
+    </table>
+
+    <number_of_view>
+        <seed>
+            <begin>1</begin>
+            <end>3</end>
+            <distribution>Uniform</distribution>
+        </seed>
+    </number_of_view>
+    <view>
+        <length_of_table>
+            <seed>
+                <distribution>Uniform</distribution>
+            </seed>
+        </length_of_table>
+
+        <start_table>
+            <seed>
+                <distribution>Uniform</distribution>
+            </seed>
+        </start_table>
+
+        <out_edge_select>
+            <seed>
+                <distribution>Uniform</distribution>
+            </seed>
+        </out_edge_select>
+    </view>
+</schema>
